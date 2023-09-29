@@ -1,0 +1,25 @@
+{
+  "name": "@libs-scripts-mep/beep-listener",
+  "version": "1.0.0",
+  "description": "Biblioteca que faz a detecção do beep dos controladores",
+  "main": "beep-listener.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/libs-scripts-mep/beep-listener.git"
+  },
+  "keywords": [
+    "beep",
+    "frequency",
+    "amplitude",
+    "validation"
+  ],
+  "author": "Guilherme Matte",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/libs-scripts-mep/beep-listener/issues"
+  },
+  "homepage": "https://github.com/libs-scripts-mep/beep-listener#readme"
+}
