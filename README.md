@@ -22,7 +22,7 @@ npm i @libs-scripts-mep/beep-listener
 Após a instalação, inclua no html:
 
 ``` html
-<script src="node_modules/@libs-scripts-mep/temp-sim/beep-listener.js"></script>
+<script src="node_modules/@libs-scripts-mep/beep-listener/beep-listener.js"></script>
 ```
 
 ## Desinstalando
