@@ -1,15 +1,4 @@
 class BeepListener {
-    constructor() {
-        this.AudioContext
-        this.AudioSourceNode
-        this.Gain
-        this.Analyser
-
-        this.HertzPorDivisao
-
-        this.EncontrouTrackFrequencia = false
-    }
-
 
     static GetAudioDevice() {
         return new Promise((resolve, reject) => {
