@@ -1,6 +1,6 @@
 {
   "name": "@libs-scripts-mep/beep-listener",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Biblioteca que faz a detecção do beep dos controladores",
   "main": "beep-listener.js",
   "scripts": {
