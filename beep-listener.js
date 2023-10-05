@@ -174,6 +174,9 @@ class BeepListener {
 
     static async TriggerFrequencyDetector(ConfigObj, ValidaAmplitude = false) {
         return new Promise(async resolve => {
+            if (this.EstourouTimeout) {
+                resolve()
+            }
 
             const Sample = await this.GetData(50, 1)
             if (Sample.frequencia[0] >= ConfigObj.MinFreq && Sample.frequencia[0] <= ConfigObj.MaxFreq) {
@@ -284,6 +287,11 @@ class BeepListener {
         return new Promise(async resolve => {
             await this.TriggerFrequencyDetector(ConfigObj, true)
 
+            if (this.EstourouTimeout) {
+                this.EstourouTimeout = false
+                resolve()
+            }
+
             const Track = await this.GetData(ConfigObj.TrackSize, ConfigObj.TrackSampleQuantity)
             const SlicedTrack = await this.TrackSlicer(Track, ConfigObj, true)
             if (SlicedTrack.result) {
@@ -307,6 +315,7 @@ class BeepListener {
                     this.CreateAnalyser(ParamObj)
 
                     this.HertzPorDivisao = ParamObj.SampleRate / ParamObj.FFTSize
+                    this.EstourouTimeout = false
 
                     await this.SuspendAudioContext()
 
@@ -342,6 +351,8 @@ class BeepListener {
             await this.SuspendAudioContext()
 
             if (!Capture) {
+                this.EstourouTimeout = true
+
                 if (this.EncontrouTrackFrequencia) {
                     this.EncontrouTrackFrequencia = false
 
