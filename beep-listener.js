@@ -1,5 +1,62 @@
-class BeepListener {
+import RelatorioTeste from "../rast-pvi/relatorio-teste.js"
+import Log from "../script-loader/utils-script.js"
 
+/**
+ * Classe que faz a manipulação dos dados obtidos pelo microfone, permitindo a validação do beep dos controladores
+ * # Exemplos
+ * ```js
+    import BeepListener from "../node_modules/@libs-scripts-mep/beep-listener/beep-listener.js"
+ * ```
+ */
+export default class BeepListener {
+
+    /** 
+     * Instância do [AudioContext](https://developer.mozilla.org/en-US/docs/Web/API/AudioContext) do BeepListener
+     * @type AudioContext
+     */
+    static AudioContext
+
+    /**
+     * [AudioSourceNode](https://developer.mozilla.org/en-US/docs/Web/API/MediaStreamAudioSourceNode) utilizado pelo AudioContext,
+     * é a fonte de áudio(microfone) que fornece os dados para ele.
+     * @type MediaStreamAudioSourceNode
+     */
+    static AudioSourceNode
+
+    /**
+     * Instância do [AnalyserNode](https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode) do BeepListener
+     * @type AnalyserNode
+     */
+    static Analyser
+
+    /**
+     * [GainNode](https://developer.mozilla.org/en-US/docs/Web/API/GainNode) do BeepListener
+     * @type GainNode
+     */
+    static Gain
+
+    /**
+     * Usado para descobrir em qual posição do array está a amplitude da frequência desejada
+     * @type Number
+     */
+    static HertzPorDivisao
+
+    /**
+     * Armazena a última faixa lida, permite retornar algo quando a faixa esperada não é detectada
+     * @type Object
+     */
+    static LastRead
+
+    /**
+     * Indica se uma faixa na frequência esperada foi encontrada, permite diferenciar quando a falha ocorreu por frequência ou amplitude
+     * @type Boolean
+     */
+    static EncontrouTrackFrequencia
+
+    /**
+     * Detecta o microfone utilizando [getUserMedia()](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)
+     * @returns microfone detectado ou erro
+     */
     static async GetAudioDevice() {
         const AudioDevice = await navigator.mediaDevices.getUserMedia({ audio: true })
             .then(Device => {
@@ -13,21 +70,30 @@ class BeepListener {
         return AudioDevice
     }
 
-
+    /**
+     * 
+     * @param {MediaStream} AudioDevice Microfone
+     * @param {object} ParamObj Objeto com configurações para o AudioContext
+     */
     static CreateAudioContext(AudioDevice, ParamObj) {
         this.AudioContext = new AudioContext({ sampleRate: ParamObj.SampleRate, latencyHint: "interactive" })
         this.AudioSourceNode = this.AudioContext.createMediaStreamSource(AudioDevice)
     }
 
+    /** Suspende o processamento do AudioContext */
     static async SuspendAudioContext() {
         await this.AudioContext.suspend()
     }
 
+    /** Retoma o processamento do AudioContext */
     static async ResumeAudioContext() {
         await this.AudioContext.resume()
     }
 
-
+    /**
+     * 
+     * @param {object} ParamObj Objeto com configurações para o Analyser e Gain
+     */
     static CreateAnalyser(ParamObj) {
         this.Analyser = this.AudioContext.createAnalyser()
         this.Analyser.fftSize = ParamObj.FFTSize
@@ -42,6 +108,13 @@ class BeepListener {
     }
 
 
+    /**
+     *  
+     * @param {number} TempoMonitoramento Tempo em que serão obtidas as amostras de frequência e amplitude
+     * @param {boolean} SampleForTrigger Se true, será obtida apenas uma amostra de frequência e amplitude para utilizar como trigger
+     * @returns objeto com os arrays de frequência e amplitude
+     * 
+     */
     static async GetData(TempoMonitoramento, SampleForTrigger = false) {
         let FrequencyDataBuffer = []
         let AmplitudeBuffer = []
@@ -71,7 +144,11 @@ class BeepListener {
         return ({ frequencia: FinalData.frequencia, amplitude: FinalData.amplitude })
     }
 
-
+    /**
+     * Permite extrair do TimeDomainArray o valor da frequência 
+     * @param {Float32Array} TimeDomainArray array do TimeDomain
+     * @returns {number} valor de frequência
+     */
     static Pitch(TimeDomainArray) {
         let maximaCount = 0
         let CorrolatedSignal = new Float32Array(this.Analyser.fftSize)
@@ -104,7 +181,7 @@ class BeepListener {
     }
 
 
-    static async AsyncDelay(timeout) {
+    static AsyncDelay(timeout) {
         return new Promise((resolve) => {
             setTimeout(() => {
                 resolve(false)
@@ -112,6 +189,12 @@ class BeepListener {
         })
     }
 
+    /**
+     * Arredonda os valores dos arrays para no máximo duas casas decimais
+     * @param {Array} FreqBuffer array da frequência
+     * @param {Array} AmpBuffer array da amplitude
+     * @returns arrays com valores arredondados
+     */
     static FixValues(FreqBuffer, AmpBuffer) {
         let FreqArray = []
         let AmpArray = []
@@ -135,7 +218,12 @@ class BeepListener {
         return { frequencia: FreqArray, amplitude: AmpArray }
     }
 
-
+    /**
+     * Obtém e retorna arrays com frequência e amplitude, usando
+     * [getFloatTimeDomainData()](https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode/getFloatTimeDomainData) e
+     * [getFloatFrequencyData()](https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode/getFloatFrequencyData)
+     * @returns objeto com os arrays de frequency e time domain
+     */
     static Freq() {
         let FrequencyDataArray = new Float32Array(this.Analyser.fftSize)
         let TimeDomainDataArray = new Float32Array(this.Analyser.fftSize)
@@ -149,78 +237,80 @@ class BeepListener {
     }
 
 
-    // Localiza no array o valor de amplitude referente à frequência passada
+    /**
+     * 
+     * @param {number} Frequencia frequência de referência
+     * @param {Float32Array} AmplitudeArray array do domínio da frequência
+     * @returns {number} valor de amplitude referente à frequência passada
+     */
     static LocalizaAmplitude(Frequencia, AmplitudeArray) {
         let PosicaoArray = Math.floor(Frequencia / this.HertzPorDivisao)
         return AmplitudeArray[PosicaoArray]
     }
 
-
-    static async TriggerFrequencyDetector(ConfigObj, ValidaAmplitude = false) {
+    /**
+     * Verifica a frequência a cada 50ms e retorna caso ela esteja dentro dos valores de frequência e, opcionalmente, de amplitude
+     * @param {object} ConfigObj objeto com os valores para fazer a detecção do trigger
+     */
+    static async TriggerFrequencyDetector(ConfigObj) {
         if (this.AudioContext.state == "running") {
 
             const Sample = await this.GetData(0, true)
             await this.AsyncDelay(50)
             if (Sample.frequencia[0] >= ConfigObj.MinFreq && Sample.frequencia[0] <= ConfigObj.MaxFreq) {
-                if (ValidaAmplitude) {
-                    if (Sample.amplitude[0] >= ConfigObj.TriggerMinAmp && Sample.amplitude[0] <= ConfigObj.TriggerMaxAmp) {
+                if (ConfigObj.AmplitudeValidation) {
+                    if (Sample.amplitude[0] >= ConfigObj.MinAmplitude && Sample.amplitude[0] <= ConfigObj.MaxAmplitude) {
                         return
                     } else {
-                        return (this.TriggerFrequencyDetector(ConfigObj, ValidaAmplitude))
+                        return (this.TriggerFrequencyDetector(ConfigObj))
                     }
                 } else {
                     return
                 }
             } else {
-                return (this.TriggerFrequencyDetector(ConfigObj, ValidaAmplitude))
+                return (this.TriggerFrequencyDetector(ConfigObj))
             }
         } else {
             return
         }
     }
 
+    /**
+     * Valida se a track passada está dentro dos valores de frequência e amplitude
+     * @param {object} Track objeto com os arrays de frequência e amplitude
+     * @param {object} ConfigObj objeto com os valores de frequência
+     * @returns objeto com o resultado da validação e valores lidos
+     */
+    static TrackValidator(Track, ConfigObj) {
 
-    static async TrackSlicer(Track, ConfigObj, ValidaAmplitude = false) {
-        const QuantidadeAmostrasTrackAcionamento = Track.frequencia.length / (ConfigObj.TrackSize / ConfigObj.TempoDeAcionamento)
+        const ValidaPorcentagem = this.ValidaPorcentagemAcionamentos(Track.frequencia, ConfigObj)
+        if (!ValidaPorcentagem) { return { result: false } }
 
-        for (let Index = 0; Index < Track.frequencia.length; Index++) {
-            if (Track.frequencia.length - Index >= QuantidadeAmostrasTrackAcionamento) {
+        this.EncontrouTrackFrequencia = true
+        const Media = this.CalculaMediaFreqAmp(Track.frequencia, Track.amplitude, ConfigObj)
 
-                const FreqValue = Track.frequencia[Index]
-                if (FreqValue >= ConfigObj.MinFreq && FreqValue <= ConfigObj.MaxFreq) {
-
-                    const FrequencyTrack = Track.frequencia.slice(Index, Index + QuantidadeAmostrasTrackAcionamento)
-                    const ValidaPorcentagem = this.ValidaPorcentagemAcionamentos(FrequencyTrack, ConfigObj)
-
-                    if (ValidaPorcentagem) {
-                        this.EncontrouTrackFrequencia = true
-                        const AmplitudeTrack = Track.amplitude.slice(Index, Index + QuantidadeAmostrasTrackAcionamento)
-
-                        if (ValidaAmplitude) {
-                            const Media = this.CalculaMediaFreqAmp(FrequencyTrack, AmplitudeTrack, ConfigObj)
-                            if (Media.amplitude >= ConfigObj.MinAmplitude && Media.amplitude <= ConfigObj.MaxAmplitude) {
-                                return {
-                                    result: true,
-                                    frequencia: FrequencyTrack,
-                                    frequenciaMedia: Media.frequencia,
-                                    amplitude: AmplitudeTrack,
-                                    amplitudeMedia: Media.amplitude
-                                }
-                            }
-
-                        } else {
-                            return { result: true, frequencia: FrequencyTrack, amplitude: AmplitudeTrack }
-                        }
-                    }
-                }
-
-            } else {
+        if (ConfigObj.AmplitudeValidation) {
+            if (!(Media.amplitude >= ConfigObj.MinAmplitude && Media.amplitude <= ConfigObj.MaxAmplitude)) {
                 return { result: false }
             }
+        }
 
+        return {
+            result: true,
+            frequencia: Track.frequencia,
+            frequenciaMedia: Media.frequencia,
+            amplitude: Track.amplitude,
+            amplitudeMedia: Media.amplitude
         }
     }
 
+    /**
+     * Calcula a média da frequência e amplitude. Só considera no cálculo os valores que estiverem dentro da faixa de aceitação da frequência.
+     * @param {Array} FreqTrack array da frequência
+     * @param {Array} AmpTrack array da amplitude
+     * @param {object} ConfigObj objeto que configura os valores válidos de frequência
+     * @returns médias de frequência e amplitude
+     */
     static CalculaMediaFreqAmp(FreqTrack, AmpTrack, ConfigObj) {
 
         let SomaValoresFrequencia = 0
@@ -241,6 +331,13 @@ class BeepListener {
         }
     }
 
+    /**
+     * Verifica se o array possui a quantidade mínima de acionamentos válidos.
+     * Por exemplo, em um array com 100 valores e 70% de aceitação, pelo menos 70 destes valores devem estar dentro do range mínimo e máximo da frequência.
+     * @param {Array} Track array com os valores de frequência lidos
+     * @param {object} ConfigObj objeto com os valores de frequência e porcentagem de aceitação
+     * @returns {boolean}
+     */
     static ValidaPorcentagemAcionamentos(Track, ConfigObj) {
         const AmostrasNecessariasParaTrackValida = Track.length * (ConfigObj.PorcentagemAcionamentosValidos / 100)
         let Contador = 0
@@ -258,17 +355,22 @@ class BeepListener {
         }
     }
 
+    /**
+     * Método que aguarda um acionamento do trigger para capturar e validar uma track, retornando a mesma caso ela seja válida.
+     * @param {object} ConfigObj objeto com os valores usados para a validação
+     * @returns {object}
+     */
     static async TrackCapture(ConfigObj) {
-        await this.TriggerFrequencyDetector(ConfigObj, true)
+        await this.TriggerFrequencyDetector(ConfigObj)
 
         if (this.AudioContext.state == "running") {
             const Track = await this.GetData(ConfigObj.TrackSize)
 
             this.LastRead = Track
 
-            const SlicedTrack = await this.TrackSlicer(Track, ConfigObj, true)
-            if (SlicedTrack.result) {
-                return SlicedTrack
+            const ValidatedTrack = this.TrackValidator(Track, ConfigObj)
+            if (ValidatedTrack.result) {
+                return ValidatedTrack
             } else {
                 return this.TrackCapture(ConfigObj)
             }
@@ -277,45 +379,171 @@ class BeepListener {
         }
     }
 
+    /**
+     * @param {object} ParamObj 
+     * @returns  RelatorioTeste
+     * ---
+     * # Init()
+     * Inicializa o microfone e cria as instâncias do AudioContext e AnalyserNode.
+     * 
+     * ---
+     * ## ParamObj (opcional)
+     * ``` js
+        ParamObj = {
+            SampleRate: number, // Opcional, valor entre 8000 e 96000
+            FFTSize: number, //Opcional, valor deve ser potência de 2, entre 2^5 e 2^15
+            SmoothingTimeConstant: number, //Opcional, valor entre 0 e 1
+            Gain: number //Opcional
+        }
+     * ```
+     * ---
+     * 
+     * ## Retorno
+     * ``` js
+        return RelatorioTeste
+     * ```
+     * ---
+     * 
+     * ## Exemplo
+     * ``` js
+        const TestReport = new RelatorioTeste()
+     
+        const InitBeep = await BeepListener.Init()
+        if (RastUtil.evalReport(InitBeep) == false) {
+            RastUtil.transferReport([InitBeep], TestReport) 
+            return 
+        }
+     * ```
+     */
     static async Init(ParamObj = {}) {
         ParamObj.SampleRate ||= 48000
         ParamObj.FFTSize ||= 2048
         ParamObj.SmoothingTimeConstant ||= 0.8
         ParamObj.Gain ||= 1
 
+        const Relatorio = new RelatorioTeste()
+
+        if (!await CheckValues()) {
+            Relatorio.AddTesteFuncional("InitMicrofone", "Valores de configuração inválidos", -1, false)
+            return Relatorio
+        }
+
         const GetDevice = await this.GetAudioDevice()
 
         if (GetDevice.result) {
             this.CreateAudioContext(GetDevice.device, ParamObj)
             this.CreateAnalyser(ParamObj)
+            await this.SuspendAudioContext()
 
             this.HertzPorDivisao = ParamObj.SampleRate / ParamObj.FFTSize
 
-            await this.SuspendAudioContext()
-            return { result: true, latencia: `${this.AudioContext.baseLatency * 1000}ms` }
+            Log.console(`AudioContext latency -> ${this.AudioContext.baseLatency * 1000}ms`, Log.Colors.Green.Cyan)
+
+            Relatorio.AddTesteFuncional("InitMicrofone", "Inicialização do microfone concluída com sucesso", -1, true)
         } else {
-            return { result: false }
+            Relatorio.AddTesteFuncional("InitMicrofone", "Falha na inicialização do microfone", -1, false)
+        }
+
+        return Relatorio
+
+
+        async function CheckValues() {
+            const TypeCheck = await Promise.all([
+                BeepListener.CheckType("SampleRate", ParamObj.SampleRate, "number"),
+                BeepListener.CheckType("FFTSize", ParamObj.FFTSize, "number"),
+                BeepListener.CheckType("SmoothingTimeConstant", ParamObj.SmoothingTimeConstant, "number"),
+                BeepListener.CheckType("Gain", ParamObj.Gain, "number")
+            ])
+
+            for (const result of TypeCheck) {
+                if (!result) { return false }
+            }
+
+            const RangeCheck = await Promise.all([
+                BeepListener.CheckRange("SampleRate", ParamObj.SampleRate, 8000, 96000),
+                BeepListener.CheckRange("FFTSize", ParamObj.FFTSize, 32, 32768),
+                BeepListener.CheckRange("SmoothingTimeConstant", ParamObj.SmoothingTimeConstant, 0, 1)
+            ])
+
+            for (const result of RangeCheck) {
+                if (!result) { return false }
+            }
+
+            if (!Number.isInteger(Math.log(ParamObj.FFTSize) / Math.log(2))) {
+                console.error("O valor de FFTSize não é uma potência de 2")
+                return false
+            }
+
+            return true
         }
     }
 
+    /**
+     * 
+     * @param {object} ConfigObj objeto com configurações para realizar a captura do beep
+     * @returns objeto com o relatório e os valores lidos
+     * ---
+     * # Capture()
+     * Detecta uma faixa com os valores de frequência, amplitude e tempo especificados.
+     * 
+     * Usado para validar o acionamento do beep dos controladores.
+     * 
+     * ---
+     * ## ConfigObj(opcional)
+     * ``` js
+        ConfigObj = {
+            MinFreq: number,
+            MaxFreq: number,
+            AmplitudeValidation: boolean,
+            MinAmplitude: number,
+            MaxAmplitude: number,
+            PorcentagemAcionamentosValidos: number,
+            TrackSize: number,
+            TimeOut: number
+        }
+     * ```
+     * ---
+     * ## Retorno
+     * ``` js
+        return {
+            relatorio: RelatorioTeste,
+            frequencia: object | Array | undefined,
+            amplitude: object | Array | undefined
+        }
+     * ```
+     * ---
+     * ## Exemplo
+     * ``` js
+        const TestReport = new RelatorioTeste()
 
+        const BeepCapture = await BeepListener.Capture()
+     
+        RastUtil.transferReport([BeepCapture.relatorio], TestReport)
+        if (RastUtil.evalReport(TestReport) == false) { return }
+     * ```
+     */
     static async Capture(ConfigObj = {}) {
-        ConfigObj.MinFreq ||= 2950
-        ConfigObj.MaxFreq ||= 3050
-        ConfigObj.MinAmplitude ||= -30
-        ConfigObj.MaxAmplitude ||= -20
+        ConfigObj.MinFreq ??= 2950
+        ConfigObj.MaxFreq ??= 3050
 
-        ConfigObj.TriggerMinAmp ||= -35
-        ConfigObj.TriggerMaxAmp ||= -18
+        ConfigObj.AmplitudeValidation ??= true
+        ConfigObj.MinAmplitude ??= -30
+        ConfigObj.MaxAmplitude ??= -20
 
-        ConfigObj.TempoDeAcionamento ||= 500
-        ConfigObj.PorcentagemAcionamentosValidos ||= 70
-        ConfigObj.TrackSize ||= 700
-        ConfigObj.TimeOut ||= 10000
+        ConfigObj.PorcentagemAcionamentosValidos ??= 70
+        ConfigObj.TrackSize ??= 500
+        ConfigObj.TimeOut ??= 10000
 
-        await this.ResumeAudioContext()
+        const Relatorio = new RelatorioTeste()
+
+        if (!await CheckValues()) {
+            Relatorio.AddTesteFuncional("Beep", "Valores de cofiguração inválidos", -1, false)
+            return Relatorio
+        }
 
         this.LastRead = {}
+
+        await this.ResumeAudioContext()
 
         const Capture = await Promise.race([this.TrackCapture(ConfigObj), this.AsyncDelay(ConfigObj.TimeOut)])
 
@@ -326,17 +554,19 @@ class BeepListener {
             if (this.EncontrouTrackFrequencia) {
                 this.EncontrouTrackFrequencia = false
 
+                Relatorio.AddTesteFuncional("Beep", "Foi detectada uma faixa na frequência esperada, mas fora da amplitude desejada", -1, false)
+
                 return {
-                    result: false,
-                    msg: "Foi detectada uma faixa na frequência esperada, mas fora da amplitude desejada",
+                    relatorio: Relatorio,
                     frequencia: this.LastRead.frequencia,
                     amplitude: this.LastRead.amplitude
                 }
 
             } else {
+                Relatorio.AddTesteFuncional("Beep", "Nenhuma faixa detectada na frequência esperada", -1, false)
+
                 return {
-                    result: false,
-                    msg: "Nenhuma faixa detectada na frequência esperada",
+                    relatorio: Relatorio,
                     frequencia: this.LastRead.frequencia,
                     amplitude: this.LastRead.amplitude
                 }
@@ -344,9 +574,10 @@ class BeepListener {
         } else {
             this.EncontrouTrackFrequencia = false
 
+            Relatorio.AddTesteFuncional("Beep", "Faixa detectada dentro dos valores esperados", -1, true)
+
             return {
-                result: true,
-                msg: "Faixa detectada dentro dos valores esperados",
+                relatorio: Relatorio,
                 frequencia: {
                     valores: Capture.frequencia,
                     frequenciaMedia: Capture.frequenciaMedia
@@ -357,41 +588,145 @@ class BeepListener {
                 }
             }
         }
+
+
+        async function CheckValues() {
+            const TypeCheck = await Promise.all([
+                BeepListener.CheckType("MinFreq", ConfigObj.MinFreq, "number"),
+                BeepListener.CheckType("MaxFreq", ConfigObj.MaxFreq, "number"),
+                BeepListener.CheckType("AmplitudeValidation", ConfigObj.AmplitudeValidation, "boolean"),
+                BeepListener.CheckType("MinAmplitude", ConfigObj.MinAmplitude, "number"),
+                BeepListener.CheckType("MaxAmplitude", ConfigObj.MaxAmplitude, "number"),
+                BeepListener.CheckType("PorcentagemAcionamentosValidos", ConfigObj.PorcentagemAcionamentosValidos, "number"),
+                BeepListener.CheckType("TrackSize", ConfigObj.TrackSize, "number"),
+                BeepListener.CheckType("TimeOut", ConfigObj.TimeOut, "number"),
+            ])
+
+            for (const result of TypeCheck) {
+                if (!result) { return false }
+            }
+
+            const RangeCheck = await Promise.all([
+                BeepListener.CheckRange("MinFreq", ConfigObj.MinFreq, 0, Infinity),
+                BeepListener.CheckRange("MaxFreq", ConfigObj.MaxFreq, 0, Infinity),
+                BeepListener.CheckRange("PorcentagemAcionamentosValidos", ConfigObj.PorcentagemAcionamentosValidos, 0, 100),
+                BeepListener.CheckRange("TrackSize", ConfigObj.TrackSize, 0, Infinity),
+                BeepListener.CheckRange("TimeOut", ConfigObj.TimeOut, 0, Infinity),
+            ])
+
+            for (const result of RangeCheck) {
+                if (!result) { return false }
+            }
+
+            const ScaleCheck = await Promise.all([
+                BeepListener.CheckScale("MinFreq", "MaxFreq", ConfigObj.MinFreq, ConfigObj.MaxFreq),
+                BeepListener.CheckScale("MinAmplitude", "MaxAmplitude", ConfigObj.MinAmplitude, ConfigObj.MaxAmplitude)
+            ])
+
+            for (const result of ScaleCheck) {
+                if (!result) { return false }
+            }
+
+            return true
+        }
     }
 
-
-    static async LeituraFrequenciaParaConfigurar(TempoTotalLeitura) {
+    /**
+     * 
+     * @param {number} TempoTotalLeitura tempo em que serão pegas as amostras de frequência
+     * @returns array com os valores de frequência
+     * ---
+     * # FrequencyReader()
+     * Retorna um array com os valores de frequência lidos no tempo que foi passado.
+     * 
+     * Usado para descobrir qual frequência deve ser usada no método ConfigDeterminator.
+     * 
+     * ---
+     * ## Exemplo
+     * ``` js
+        console.log(await BeepListener.FrequencyReader(2000))
+     * ```
+     */
+    static async FrequencyReader(TempoTotalLeitura) {
         await this.ResumeAudioContext()
 
         const Track = await this.GetData(TempoTotalLeitura)
 
-        console.log(Track.frequencia)
         await this.SuspendAudioContext()
+        return Track.frequencia
     }
 
+    /**
+     * 
+     * @param {object} ConfigObj objeto com configurações para detecção da faixa
+     * @returns objeto com informações da frequência e amplitude
+     * ---
+     * # ConfigDeterminator
+     * Detecta e retorna uma faixa na frequência especificada.
+     * 
+     * Utilizado para determinar os valores de frequência, amplitude e tempo que devem ser usados no método Capture.
+     * 
+     * ---
+     * ## ConfigObj(opcional)
+     * ``` js
+        ConfigObj = {
+            MinFreq: number,
+            MaxFreq: number,
+            PorcentagemAcionamentosValidos: number,
+            TrackSize: number
+        } 
+     * ```
+     * ---
+     * ## Retorno
+     * ``` js
+        return {
+        frequencia: {
+                min: number,
+                max: number,
+                media: number,
+                valores: Array
+            },
+            amplitude: {
+                min: number,
+                max: number,
+                media: number,
+                valores: Array
+            }
+        }
+     * ```   
+     * ---
+     * ## Exemplo
+     * ``` js
+        console.log(await BeepListener.ConfigDeterminator())
+     * ```
+     */
+    static async ConfigDeterminator(ConfigObj = {}) {
+        ConfigObj.MinFreq ??= 2950
+        ConfigObj.MaxFreq ??= 3050
+        ConfigObj.PorcentagemAcionamentosValidos ??= 70
+        ConfigObj.TrackSize ??= 500
 
-    static async DeterminaFrequenciaAmplitudeParaConfigurar(ConfigObj = {}) {
-        ConfigObj.MinFreq ||= 2950
-        ConfigObj.MaxFreq ||= 3050
-        ConfigObj.TempoDeAcionamento ||= 500
-        ConfigObj.PorcentagemAcionamentosValidos ||= 70
-        ConfigObj.TrackSize ||= 700
+        ConfigObj.AmplitudeValidation = false
+
+        if (!await CheckValues()) {
+            return "Valores de configuração são inválidos"
+        }
 
         await this.ResumeAudioContext()
 
         await this.TriggerFrequencyDetector(ConfigObj)
         const Track = await this.GetData(ConfigObj.TrackSize)
 
-        const SlicedTrack = await this.TrackSlicer(Track, ConfigObj)
+        const ValidatedTrack = this.TrackValidator(Track, ConfigObj)
 
-        if (SlicedTrack.result) {
+        if (ValidatedTrack.result) {
 
             let MaiorFrequencia, MenorFrequencia, MaiorAmplitude, MenorAmplitude
             let ConfigurouValores = false
 
-            for (let Index = 0; Index < SlicedTrack.frequencia.length; Index++) {
-                const FreqValue = SlicedTrack.frequencia[Index]
-                const AmplitudeValue = SlicedTrack.amplitude[Index]
+            for (let Index = 0; Index < ValidatedTrack.frequencia.length; Index++) {
+                const FreqValue = ValidatedTrack.frequencia[Index]
+                const AmplitudeValue = ValidatedTrack.amplitude[Index]
 
                 if (FreqValue >= ConfigObj.MinFreq && FreqValue <= ConfigObj.MaxFreq) {
 
@@ -417,21 +752,102 @@ class BeepListener {
                         MenorAmplitude = AmplitudeValue
                     }
                 }
-
             }
 
-            const Media = this.CalculaMediaFreqAmp(SlicedTrack.frequencia, SlicedTrack.amplitude, ConfigObj)
+            const Media = this.CalculaMediaFreqAmp(ValidatedTrack.frequencia, ValidatedTrack.amplitude, ConfigObj)
 
             await this.SuspendAudioContext()
 
             return {
-                frequencia: { min: MenorFrequencia, max: MaiorFrequencia, media: Media.frequencia, valores: SlicedTrack.frequencia },
-                amplitude: { min: MenorAmplitude, max: MaiorAmplitude, media: Media.amplitude, valores: SlicedTrack.amplitude }
+                frequencia: { min: MenorFrequencia, max: MaiorFrequencia, media: Media.frequencia, valores: ValidatedTrack.frequencia },
+                amplitude: { min: MenorAmplitude, max: MaiorAmplitude, media: Media.amplitude, valores: ValidatedTrack.amplitude }
             }
 
         } else {
-            return this.DeterminaFrequenciaAmplitudeParaConfigurar(ConfigObj)
+            return this.ConfigDeterminator(ConfigObj)
+        }
+
+
+        async function CheckValues() {
+            const TypeCheck = await Promise.all([
+                BeepListener.CheckType("MinFreq", ConfigObj.MinFreq, "number"),
+                BeepListener.CheckType("MaxFreq", ConfigObj.MaxFreq, "number"),
+                BeepListener.CheckType("PorcentagemAcionamentosValidos", ConfigObj.PorcentagemAcionamentosValidos, "number"),
+                BeepListener.CheckType("TrackSize", ConfigObj.TrackSize, "number")
+            ])
+
+            for (const result of TypeCheck) {
+                if (!result) { return false }
+            }
+
+            const RangeCheck = await Promise.all([
+                BeepListener.CheckRange("MinFreq", ConfigObj.MinFreq, 0, Infinity),
+                BeepListener.CheckRange("MaxFreq", ConfigObj.MaxFreq, 0, Infinity),
+                BeepListener.CheckRange("PorcentagemAcionamentosValidos", ConfigObj.PorcentagemAcionamentosValidos, 0, 100),
+                BeepListener.CheckRange("TrackSize", ConfigObj.TrackSize, 0, Infinity)
+            ])
+
+            for (const result of RangeCheck) {
+                if (!result) { return false }
+            }
+
+            if (!BeepListener.CheckScale("MinFreq", "MaxFreq", ConfigObj.MinFreq, ConfigObj.MaxFreq)) { return false }
+
+            return true
         }
     }
+
+    /**
+     * Usado para validar se os parâmetros passados nos métodos são do tipo esperado
+     * @param {string} Name nome do parâmetro
+     * @param {number} Value valor do parâmetro
+     * @param {string} ExpectedType tipo que o parâmetro deve ser
+     * @returns true se o parâmetro for do tipo esperado, false se não for
+     */
+    static CheckType(Name, Value, ExpectedType) {
+        if (typeof Value == ExpectedType) {
+            return true
+        } else {
+            console.error(`${Name} não é do tipo ${ExpectedType}`)
+            return false
+        }
+    }
+
+    /**
+     * Usado para validar se os parâmetros passados nos métodos estão dentro do range esperado
+     * @param {string} Name nome do parâmetro
+     * @param {number} Value valor do parâmetro
+     * @param {number} MinValue valor mínimo que o parâmetro deve ter
+     * @param {number} MaxValue valor máximo que o parâmetro deve ter
+     * @returns true se o valor estiver dentro do range, false se não estiver
+     */
+    static CheckRange(Name, Value, MinValue, MaxValue) {
+        if (Value >= MinValue && Value <= MaxValue) {
+            return true
+        } else {
+            console.error(`${Name} está fora do range [${MinValue} - ${MaxValue}]`)
+            return false
+        }
+    }
+
+    /**
+     * Usado para verificar se a escala formada por dois parâmetros é valida,
+     * ou seja, para evitar que o valor mínimo seja maior que o valor máximo
+     * @param {string} MinValueName nome do parâmetro que indica o valor mínimo
+     * @param {string} MaxValueName nome do parâmetro que indica o valor máximo
+     * @param {number} MinValue valor do parâmetro que indica o valor mínimo
+     * @param {number} MaxValue valor do parâmetro que indica o valor máximo
+     * @returns true caso seja uma escala válida, false se não for
+     */
+    static CheckScale(MinValueName, MaxValueName, MinValue, MaxValue) {
+        if (MinValue <= MaxValue) {
+            return true
+        } else {
+            console.error(`Escala inválida, ${MinValueName} é maior que ${MaxValueName}`)
+            return false
+        }
+    }
+
+    static { window.BeepListener = this }
 
 }
