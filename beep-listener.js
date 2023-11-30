@@ -408,7 +408,7 @@ export default class BeepListener {
      * ``` js
         const TestReport = new RelatorioTeste()
      
-        const InitBeep = await BeepListener.Init()
+        const InitBeep = await BeepListener.Init().catch((relatorio) => { return relatorio })
         if (RastUtil.evalReport(InitBeep) == false) {
             RastUtil.transferReport([InitBeep], TestReport) 
             return 
@@ -424,8 +424,8 @@ export default class BeepListener {
         const Relatorio = new RelatorioTeste()
 
         if (!await CheckValues()) {
-            Relatorio.AddTesteFuncional("InitMicrofone", "Valores de configuração inválidos", -1, false)
-            return Relatorio
+            Relatorio.AddTesteFuncional("InitBeep", "Valores de configuração inválidos", -1, false)
+            return Promise.reject(Relatorio)
         }
 
         const GetDevice = await this.GetAudioDevice()
@@ -440,12 +440,11 @@ export default class BeepListener {
             Log.console(`AudioContext latency -> ${this.AudioContext.baseLatency * 1000}ms`, Log.Colors.Green.Cyan)
 
             Relatorio.AddTesteFuncional("InitMicrofone", "Inicialização do microfone concluída com sucesso", -1, true)
+            return Relatorio
         } else {
             Relatorio.AddTesteFuncional("InitMicrofone", "Falha na inicialização do microfone", -1, false)
+            return Promise.reject(Relatorio)
         }
-
-        return Relatorio
-
 
         async function CheckValues() {
             const TypeCheck = await Promise.all([
@@ -505,20 +504,16 @@ export default class BeepListener {
      * ---
      * ## Retorno
      * ``` js
-        return {
-            relatorio: RelatorioTeste,
-            frequencia: object | Array | undefined,
-            amplitude: object | Array | undefined
-        }
+        return RelatorioTeste
      * ```
      * ---
      * ## Exemplo
      * ``` js
         const TestReport = new RelatorioTeste()
 
-        const BeepCapture = await BeepListener.Capture()
+        const BeepCapture = await BeepListener.Capture().catch((relatorio) => { return relatorio })
      
-        RastUtil.transferReport([BeepCapture.relatorio], TestReport)
+        RastUtil.transferReport([BeepCapture], TestReport)
         if (RastUtil.evalReport(TestReport) == false) { return }
      * ```
      */
@@ -537,8 +532,8 @@ export default class BeepListener {
         const Relatorio = new RelatorioTeste()
 
         if (!await CheckValues()) {
-            Relatorio.AddTesteFuncional("Beep", "Valores de cofiguração inválidos", -1, false)
-            return Relatorio
+            Relatorio.AddTesteFuncional("Capture", "Valores de cofiguração inválidos", -1, false)
+            return Promise.reject(Relatorio)
         }
 
         this.LastRead = {}
@@ -554,30 +549,21 @@ export default class BeepListener {
             if (this.EncontrouTrackFrequencia) {
                 this.EncontrouTrackFrequencia = false
 
-                Relatorio.AddTesteFuncional("Beep", "Foi detectada uma faixa na frequência esperada, mas fora da amplitude desejada", -1, false)
+                console.log({ frequencia: this.LastRead.frequencia, amplitude: this.LastRead.amplitude })
 
-                return {
-                    relatorio: Relatorio,
-                    frequencia: this.LastRead.frequencia,
-                    amplitude: this.LastRead.amplitude
-                }
+                Relatorio.AddTesteFuncional("Beep", "Foi detectada uma faixa na frequência esperada, mas fora da amplitude desejada", -1, false)
+                return Promise.reject(Relatorio)
 
             } else {
-                Relatorio.AddTesteFuncional("Beep", "Nenhuma faixa detectada na frequência esperada", -1, false)
+                console.log({ frequencia: this.LastRead.frequencia, amplitude: this.LastRead.amplitude })
 
-                return {
-                    relatorio: Relatorio,
-                    frequencia: this.LastRead.frequencia,
-                    amplitude: this.LastRead.amplitude
-                }
+                Relatorio.AddTesteFuncional("Beep", "Nenhuma faixa detectada na frequência esperada", -1, false)
+                return Promise.reject(Relatorio)
             }
         } else {
             this.EncontrouTrackFrequencia = false
 
-            Relatorio.AddTesteFuncional("Beep", "Faixa detectada dentro dos valores esperados", -1, true)
-
-            return {
-                relatorio: Relatorio,
+            console.log({
                 frequencia: {
                     valores: Capture.frequencia,
                     frequenciaMedia: Capture.frequenciaMedia
@@ -586,7 +572,10 @@ export default class BeepListener {
                     valores: Capture.amplitude,
                     amplitudeMedia: Capture.amplitudeMedia
                 }
-            }
+            })
+
+            Relatorio.AddTesteFuncional("Beep", "Faixa detectada dentro dos valores esperados", -1, true)
+            return Relatorio
         }
 
 
