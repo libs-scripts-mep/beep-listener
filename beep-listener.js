@@ -58,7 +58,7 @@ export default class BeepListener {
      * @returns microfone detectado ou erro
      */
     static async GetAudioDevice() {
-        const AudioDevice = await navigator.mediaDevices.getUserMedia({ audio: true })
+        const AudioDevice = await navigator.mediaDevices.getUserMedia({ audio: { autoGainControl: false } })
             .then(Device => {
                 return { result: true, device: Device }
             })
