@@ -53,12 +53,49 @@ export default class BeepListener {
      */
     static EncontrouTrackFrequencia
 
+    //#region DeviceIds
+
+    /** Localiza o ID de um dispositivo baseado no filtro passado */
+    static async FindDeviceId(DeviceFilter) {
+        const DeviceList = await navigator.mediaDevices.enumerateDevices()
+        const Device = DeviceList.find(DeviceFilter)
+        if (Device != undefined) {
+            return Device.deviceId
+        } else {
+            return undefined
+        }
+    }
+
+    /**
+     * Webcam Logitech C930e
+     * 
+     * ![Image](https://i.imgur.com/9YnqdVk.png)
+     */
+    static async C930e() {
+        const filter = device => device.kind == "audioinput" && device.label.includes("C930e") && !device.deviceId.includes("communications") && !device.deviceId.includes("default")
+        return await this.FindDeviceId(filter)
+    }
+
+    /**
+     * Microfone de lapela USB HS-29
+     * 
+     * ![Image](https://i.imgur.com/DffAe6i.png)
+     */
+    static async HS_29() {
+        const filter = device => device.kind == "audioinput" && device.label.includes("AB13X") && !device.deviceId.includes("communications") && !device.deviceId.includes("default")
+        return await this.FindDeviceId(filter)
+    }
+
+    //#endregion DeviceIds
+
+
     /**
      * Detecta o microfone utilizando [getUserMedia()](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)
+     * @param {string | undefined} deviceId
      * @returns microfone detectado ou erro
      */
-    static async GetAudioDevice() {
-        const AudioDevice = await navigator.mediaDevices.getUserMedia({ audio: { autoGainControl: false } })
+    static async GetAudioDevice(deviceId) {
+        const AudioDevice = await navigator.mediaDevices.getUserMedia({ audio: { autoGainControl: false, deviceId } })
             .then(Device => {
                 return { result: true, device: Device }
             })
@@ -196,26 +233,21 @@ export default class BeepListener {
      * @returns arrays com valores arredondados
      */
     static FixValues(FreqBuffer, AmpBuffer) {
-        let FreqArray = []
-        let AmpArray = []
+        fix(FreqBuffer)
+        fix(AmpBuffer)
 
-        for (const FreqValue of FreqBuffer) {
-            if (FreqValue % 1 != 0 && !isNaN(FreqValue)) {
-                FreqArray.push(parseFloat(FreqValue.toFixed(2)))
-            } else {
-                FreqArray.push(FreqValue)
-            }
+        return { frequencia: FreqBuffer, amplitude: AmpBuffer }
+
+        /**
+         * @param {Array} buffer 
+         */
+        function fix(buffer) {
+            buffer.forEach((value, index, array) => {
+                if (value % 1 != 0 && !isNaN(value)) {
+                    array[index] = parseFloat(array[index].toFixed(2))
+                }
+            })
         }
-
-        for (const AmpValue of AmpBuffer) {
-            if (AmpValue % 1 != 0 && !isNaN(AmpValue)) {
-                AmpArray.push(parseFloat(AmpValue.toFixed(2)))
-            } else {
-                AmpArray.push(AmpValue)
-            }
-        }
-
-        return { frequencia: FreqArray, amplitude: AmpArray }
     }
 
     /**
@@ -284,50 +316,57 @@ export default class BeepListener {
     static TrackValidator(Track, ConfigObj) {
 
         const ValidaPorcentagem = this.ValidaPorcentagemAcionamentos(Track.frequencia, ConfigObj)
-        if (!ValidaPorcentagem) { return { result: false } }
-
+        if (!ValidaPorcentagem) return { result: false }
         this.EncontrouTrackFrequencia = true
-        const Media = this.CalculaMediaFreqAmp(Track.frequencia, Track.amplitude, ConfigObj)
+
+        const filteredTrack = this.TrackFilter(Track, ConfigObj)
+        const media = this.CalculaMediaFreqAmp(filteredTrack.frequencia, filteredTrack.amplitude)
 
         if (ConfigObj.AmplitudeValidation) {
-            if (!(Media.amplitude >= ConfigObj.MinAmplitude && Media.amplitude <= ConfigObj.MaxAmplitude)) {
+            if (!(media.amplitude >= ConfigObj.MinAmplitude && media.amplitude <= ConfigObj.MaxAmplitude)) {
                 return { result: false }
             }
         }
 
         return {
             result: true,
-            frequencia: Track.frequencia,
-            frequenciaMedia: Media.frequencia,
-            amplitude: Track.amplitude,
-            amplitudeMedia: Media.amplitude
+            frequencia: filteredTrack.frequencia,
+            frequenciaMedia: media.frequencia,
+            amplitude: filteredTrack.amplitude,
+            amplitudeMedia: media.amplitude
         }
     }
 
+
     /**
-     * Calcula a média da frequência e amplitude. Só considera no cálculo os valores que estiverem dentro da faixa de aceitação da frequência.
-     * @param {Array} FreqTrack array da frequência
-     * @param {Array} AmpTrack array da amplitude
-     * @param {object} ConfigObj objeto que configura os valores válidos de frequência
-     * @returns médias de frequência e amplitude
+     * @param {{frequencia: array, amplitude: array}} Track 
+     * @param {object} ConfigObj 
+     * @returns 
      */
-    static CalculaMediaFreqAmp(FreqTrack, AmpTrack, ConfigObj) {
-
-        let SomaValoresFrequencia = 0
-        let SomaValoresAmplitude = 0
-        let Contador = 0
-
-        FreqTrack.forEach((FreqValue, Index) => {
-            if (FreqValue >= ConfigObj.MinFreq && FreqValue <= ConfigObj.MaxFreq) {
-                SomaValoresFrequencia += FreqValue
-                SomaValoresAmplitude += AmpTrack[Index]
-                Contador++
+    static TrackFilter(Track, ConfigObj) {
+        const amplitudeArray = []
+        const frequencyArray = Track.frequencia.filter((value, index) => {
+            if (value >= ConfigObj.MinFreq && value <= ConfigObj.MaxFreq) {
+                amplitudeArray.push(Track.amplitude[index])
+                return true
             }
+            
+            return false
         })
 
+        return { frequencia: frequencyArray, amplitude: amplitudeArray }
+    }
+
+    /**
+     * Calcula a média da frequência e amplitude.
+     * @param {array} freqTrack array da frequência
+     * @param {array} ampTrack array da amplitude
+     * @returns médias de frequência e amplitude
+     */
+    static CalculaMediaFreqAmp(freqTrack, ampTrack) {
         return {
-            frequencia: SomaValoresFrequencia / Contador,
-            amplitude: SomaValoresAmplitude / Contador
+            frequencia: freqTrack.reduce((accumulator, currentValue) => accumulator + currentValue) / freqTrack.length,
+            amplitude: ampTrack.reduce((accumulator, currentValue) => accumulator + currentValue) / ampTrack.length
         }
     }
 
@@ -339,20 +378,11 @@ export default class BeepListener {
      * @returns {boolean}
      */
     static ValidaPorcentagemAcionamentos(Track, ConfigObj) {
-        const AmostrasNecessariasParaTrackValida = Track.length * (ConfigObj.PorcentagemAcionamentosValidos / 100)
-        let Contador = 0
+        const AmostrasParaTrackValida = Track.length * (ConfigObj.PorcentagemAcionamentosValidos / 100)
 
-        for (const Valor of Track) {
-            if (Valor >= ConfigObj.MinFreq && Valor <= ConfigObj.MaxFreq) {
-                Contador++
-            }
-        }
+        const filteredArray = Track.filter(frequencia => frequencia >= ConfigObj.MinFreq && frequencia <= ConfigObj.MaxFreq)
 
-        if (Contador >= AmostrasNecessariasParaTrackValida) {
-            return true
-        } else {
-            return false
-        }
+        return filteredArray.length >= AmostrasParaTrackValida
     }
 
     /**
@@ -393,7 +423,8 @@ export default class BeepListener {
             SampleRate: number, // Opcional, valor entre 8000 e 96000
             FFTSize: number, //Opcional, valor deve ser potência de 2, entre 2^5 e 2^15
             SmoothingTimeConstant: number, //Opcional, valor entre 0 e 1
-            Gain: number //Opcional
+            Gain: number, //Opcional
+            DeviceId: string | undefined
         }
      * ```
      * ---
@@ -416,10 +447,11 @@ export default class BeepListener {
      * ```
      */
     static async Init(ParamObj = {}) {
-        ParamObj.SampleRate ||= 48000
-        ParamObj.FFTSize ||= 2048
-        ParamObj.SmoothingTimeConstant ||= 0.8
-        ParamObj.Gain ||= 1
+        ParamObj.SampleRate ??= 48000
+        ParamObj.FFTSize ??= 2048
+        ParamObj.SmoothingTimeConstant ??= 0.8
+        ParamObj.Gain ??= 1
+        ParamObj.DeviceId ??= undefined
 
         const Relatorio = new RelatorioTeste()
 
@@ -428,7 +460,7 @@ export default class BeepListener {
             return Promise.reject(Relatorio)
         }
 
-        const GetDevice = await this.GetAudioDevice()
+        const GetDevice = await this.GetAudioDevice(ParamObj.DeviceId)
 
         if (GetDevice.result) {
             this.CreateAudioContext(GetDevice.device, ParamObj)
@@ -709,47 +741,21 @@ export default class BeepListener {
         const ValidatedTrack = this.TrackValidator(Track, ConfigObj)
 
         if (ValidatedTrack.result) {
-
-            let MaiorFrequencia, MenorFrequencia, MaiorAmplitude, MenorAmplitude
-            let ConfigurouValores = false
-
-            for (let Index = 0; Index < ValidatedTrack.frequencia.length; Index++) {
-                const FreqValue = ValidatedTrack.frequencia[Index]
-                const AmplitudeValue = ValidatedTrack.amplitude[Index]
-
-                if (FreqValue >= ConfigObj.MinFreq && FreqValue <= ConfigObj.MaxFreq) {
-
-                    if (!ConfigurouValores) {
-                        ConfigurouValores = true
-
-                        MaiorFrequencia = FreqValue
-                        MenorFrequencia = FreqValue
-                        MaiorAmplitude = AmplitudeValue
-                        MenorAmplitude = AmplitudeValue
-                    }
-
-                    if (FreqValue > MaiorFrequencia) {
-                        MaiorFrequencia = FreqValue
-                    }
-                    if (FreqValue < MenorFrequencia) {
-                        MenorFrequencia = FreqValue
-                    }
-                    if (AmplitudeValue > MaiorAmplitude) {
-                        MaiorAmplitude = AmplitudeValue
-                    }
-                    if (AmplitudeValue < MenorAmplitude) {
-                        MenorAmplitude = AmplitudeValue
-                    }
-                }
-            }
-
-            const Media = this.CalculaMediaFreqAmp(ValidatedTrack.frequencia, ValidatedTrack.amplitude, ConfigObj)
-
             await this.SuspendAudioContext()
 
             return {
-                frequencia: { min: MenorFrequencia, max: MaiorFrequencia, media: Media.frequencia, valores: ValidatedTrack.frequencia },
-                amplitude: { min: MenorAmplitude, max: MaiorAmplitude, media: Media.amplitude, valores: ValidatedTrack.amplitude }
+                frequencia: {
+                    min: Math.min(...ValidatedTrack.frequencia),
+                    max: Math.max(...ValidatedTrack.frequencia),
+                    media: ValidatedTrack.frequenciaMedia,
+                    valores: ValidatedTrack.frequencia
+                },
+                amplitude: {
+                    min: Math.min(...ValidatedTrack.amplitude),
+                    max: Math.max(...ValidatedTrack.amplitude),
+                    media: ValidatedTrack.amplitudeMedia,
+                    valores: ValidatedTrack.amplitude
+                }
             }
 
         } else {
