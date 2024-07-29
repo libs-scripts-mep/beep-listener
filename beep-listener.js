@@ -654,6 +654,102 @@ export default class BeepListener {
 
     /**
      * 
+     * @param {{
+     * MinAmplitude: number, 
+     * MaxAmplitude: number,
+     * PorcentagemAcionamentosValidos: number,
+     * MinFreq: number,
+     * MaxFreq: number,
+     * TrackSize: number,
+     * TimeOut: number
+     * }} [calibrationOptions]
+     * @param {number} [amplitudeTolerance=2]
+     * @returns {Promise<boolean>}
+    */
+    static calibrateMic(calibrationOptions = {}, amplitudeTolerance = 2, gainStep = 1) {
+        calibrationOptions.MinAmplitude ??= -30
+        calibrationOptions.MaxAmplitude ??= -20
+        calibrationOptions.PorcentagemAcionamentosValidos ??= 70
+        calibrationOptions.MinFreq ??= 3050
+        calibrationOptions.MaxFreq ??= 3250
+        calibrationOptions.TrackSize ??= 300
+        calibrationOptions.FirstReadTimeOut ??= 5000
+        calibrationOptions.CalibrationTimeOut ??= 10000
+
+        return new Promise(async resolve => {
+            const firstReadTimeOut = setTimeout(() => {
+                resolve(false)
+            }, calibrationOptions.FirstReadTimeOut)
+
+            const currentRead = await BeepListener.ConfigDeterminator(calibrationOptions)
+            clearTimeout(firstReadTimeOut)
+
+            const centralAmplitude = (calibrationOptions.MinAmplitude + calibrationOptions.MaxAmplitude) / 2
+            const currentAmplitude = currentRead.amplitude.media
+            if (Math.abs(currentAmplitude - centralAmplitude) <= amplitudeTolerance) {
+                sessionStorage.setItem("GainNodeValue", this.Gain.gain.value)
+                Log.console(`Novo valor de ganho: ${this.Gain.gain.value}
+                    Amplitude: ${currentAmplitude}`, Log.Colors.Green.Cyan)
+                resolve(true)
+            }
+
+            const gainDiscoverTimeOut = setTimeout(() => {
+                resolve(false)
+            }, calibrationOptions.CalibrationTimeOut)
+
+            resolve(await this.gainDiscover(calibrationOptions, centralAmplitude, currentAmplitude, this.Gain.gain.value, gainStep, amplitudeTolerance))
+        })
+    }
+
+    static async gainDiscover(calibrationOptions, centralAmplitude, currentAmplitude, initialGain, gainStep, amplitudeTolerance) {
+        this.Gain.gain.value = initialGain
+
+        /** @type {[number, number][]} */
+        let amplitudeSamples = []
+
+        let condition = () => currentAmplitude > centralAmplitude + amplitudeTolerance
+
+        if (currentAmplitude > centralAmplitude) {
+            condition = () => currentAmplitude < centralAmplitude - amplitudeTolerance
+            gainStep *= -1
+        }
+
+        while (!condition() && this.Gain.gain.value > 0) {
+            const currentRead = await BeepListener.ConfigDeterminator(calibrationOptions)
+            Log.console(`New Gain -> ${this.Gain.gain.value}`, Log.Colors.Green.SpringGreen)
+            console.log(currentRead)
+            const newAmplitude = currentRead.amplitude.media
+
+            if (Math.abs(newAmplitude - centralAmplitude) <= amplitudeTolerance) {
+                Log.console(`Novo valor de ganho: ${this.Gain.gain.value}
+                Amplitude: ${newAmplitude}`, Log.Colors.Green.Cyan)
+                sessionStorage.setItem("GainNodeValue", this.Gain.gain.value)
+                return true
+            }
+
+            currentAmplitude = newAmplitude
+            amplitudeSamples.push([this.Gain.gain.value, newAmplitude])
+            this.Gain.gain.value += gainStep
+        }
+
+        if (currentAmplitude > centralAmplitude) { amplitudeSamples = amplitudeSamples.reverse() }
+
+        if (amplitudeSamples.length > 1 && this.Gain.gain.value > 0) {
+            amplitudeSamples = [amplitudeSamples.findLast(sample => sample[1] < centralAmplitude - amplitudeTolerance)]
+        }
+
+        return await this.gainDiscover(
+            calibrationOptions,
+            centralAmplitude,
+            amplitudeSamples[0][1],
+            amplitudeSamples[0][0],
+            Math.abs(gainStep / 2),
+            amplitudeTolerance
+        )
+    }
+
+    /**
+     * 
      * @param {number} TempoTotalLeitura tempo em que serão pegas as amostras de frequência
      * @returns array com os valores de frequência
      * ---
