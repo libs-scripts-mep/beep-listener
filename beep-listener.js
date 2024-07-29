@@ -564,7 +564,7 @@ export default class BeepListener {
         const Relatorio = new RelatorioTeste()
 
         if (!await CheckValues()) {
-            Relatorio.AddTesteFuncional("Capture", "Valores de cofiguração inválidos", -1, false)
+            Relatorio.AddTesteFuncional("Capture", "Valores de configuração inválidos", -1, false)
             return Promise.reject(Relatorio)
         }
 
