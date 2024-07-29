@@ -276,7 +276,7 @@ export default class BeepListener {
      * @returns {number} valor de amplitude referente à frequência passada
      */
     static LocalizaAmplitude(Frequencia, AmplitudeArray) {
-        let PosicaoArray = Math.floor(Frequencia / this.HertzPorDivisao)
+        let PosicaoArray = Math.round(Frequencia / this.HertzPorDivisao)
         return AmplitudeArray[PosicaoArray]
     }
 
