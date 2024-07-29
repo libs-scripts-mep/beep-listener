@@ -350,7 +350,7 @@ export default class BeepListener {
                 amplitudeArray.push(Track.amplitude[index])
                 return true
             }
-            
+
             return false
         })
 
@@ -366,7 +366,7 @@ export default class BeepListener {
     static CalculaMediaFreqAmp(freqTrack, ampTrack) {
         return {
             frequencia: freqTrack.reduce((accumulator, currentValue) => accumulator + currentValue) / freqTrack.length,
-            amplitude: ampTrack.reduce((accumulator, currentValue) => accumulator + currentValue) / ampTrack.length
+            amplitude: ampTrack.sort((a, b) => a - b)[Math.round(ampTrack.length / 2)]
         }
     }
 
