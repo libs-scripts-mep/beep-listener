@@ -653,7 +653,7 @@ export default class BeepListener {
     }
 
     /**
-     * 
+     * Ajusta o ganho do microfone e retorna o valor.
      * @param {{
      * MinAmplitude: number, 
      * MaxAmplitude: number,
@@ -661,10 +661,21 @@ export default class BeepListener {
      * MinFreq: number,
      * MaxFreq: number,
      * TrackSize: number,
-     * TimeOut: number
+     * FirstReadTimeOut: number,
+     * CalibrationTimeOut: number
      * }} [calibrationOptions]
      * @param {number} [amplitudeTolerance=2]
-     * @returns {Promise<boolean>}
+     * @param {number} [gainStep=1]
+     * @returns {Promise<{success: boolean, msg: string, gain?: number}>}
+     * @example
+     * if (sessionStorage.getItem("gain") == null) {
+     *     const calibrateMic = await BeepListener.calibrateMic()
+     *     if (calibrateMic.success) {
+     *         sessionStorage.setItem("gain", calibrateMic.gain)
+     *     } else {
+     *         // setar erro
+     *     }
+     * } else { BeepListener.setGain(parseFloat(sessionStorage.getItem("gain"))) }
     */
     static async calibrateMic(calibrationOptions = {}, amplitudeTolerance = 2, gainStep = 1) {
         calibrationOptions.MinAmplitude ??= -30
@@ -696,6 +707,23 @@ export default class BeepListener {
         ])
     }
 
+    /**
+     * 
+     * @param {{
+     * MinAmplitude: number,
+     * MaxAmplitude: number,
+     * PorcentagemAcionamentosValidos: number,
+     * MinFreq: number,
+     * MaxFreq: number,
+     * TrackSize: number
+     * }} calibrationOptions
+     * @param {number} centralAmplitude 
+     * @param {number} currentAmplitude
+     * @param {number} initialGain
+     * @param {number} gainStep
+     * @param {number} amplitudeTolerance
+     * @returns {Promise<{success: boolean, msg: string, gain: number}>}
+    */
     static async gainDiscover(calibrationOptions, centralAmplitude, currentAmplitude, initialGain, gainStep, amplitudeTolerance) {
         this.Gain.gain.value = initialGain
 
