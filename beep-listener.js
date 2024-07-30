@@ -666,7 +666,7 @@ export default class BeepListener {
      * @param {number} [amplitudeTolerance=2]
      * @returns {Promise<boolean>}
     */
-    static calibrateMic(calibrationOptions = {}, amplitudeTolerance = 2, gainStep = 1) {
+    static async calibrateMic(calibrationOptions = {}, amplitudeTolerance = 2, gainStep = 1) {
         calibrationOptions.MinAmplitude ??= -30
         calibrationOptions.MaxAmplitude ??= -20
         calibrationOptions.PorcentagemAcionamentosValidos ??= 70
@@ -676,29 +676,24 @@ export default class BeepListener {
         calibrationOptions.FirstReadTimeOut ??= 5000
         calibrationOptions.CalibrationTimeOut ??= 10000
 
-        return new Promise(async resolve => {
-            const firstReadTimeOut = setTimeout(() => {
-                resolve(false)
-            }, calibrationOptions.FirstReadTimeOut)
+        const firstRead = await Promise.race([
+            BeepListener.ConfigDeterminator(calibrationOptions),
+            this.AsyncDelay(calibrationOptions.FirstReadTimeOut).then(() => false)
+        ])
 
-            const currentRead = await BeepListener.ConfigDeterminator(calibrationOptions)
-            clearTimeout(firstReadTimeOut)
+        if (!firstRead) { return { success: false, msg: "Nenhuma faixa detectada na frequência esperada" } }
 
-            const centralAmplitude = (calibrationOptions.MinAmplitude + calibrationOptions.MaxAmplitude) / 2
-            const currentAmplitude = currentRead.amplitude.media
-            if (Math.abs(currentAmplitude - centralAmplitude) <= amplitudeTolerance) {
-                sessionStorage.setItem("GainNodeValue", this.Gain.gain.value)
-                Log.console(`Novo valor de ganho: ${this.Gain.gain.value}
-                    Amplitude: ${currentAmplitude}`, Log.Colors.Green.Cyan)
-                resolve(true)
-            }
+        const currentAmplitude = firstRead.amplitude.media
+        const centralAmplitude = (calibrationOptions.MinAmplitude + calibrationOptions.MaxAmplitude) / 2
+        if (Math.abs(currentAmplitude - centralAmplitude) <= amplitudeTolerance) {
+            Log.console(`Novo valor de ganho: ${this.Gain.gain.value}`, Log.Colors.Green.Cyan)
+            return { success: true, msg: `Sucesso ao ajustar o ganho`, gain: this.Gain.gain.value }
+        }
 
-            const gainDiscoverTimeOut = setTimeout(() => {
-                resolve(false)
-            }, calibrationOptions.CalibrationTimeOut)
-
-            resolve(await this.gainDiscover(calibrationOptions, centralAmplitude, currentAmplitude, this.Gain.gain.value, gainStep, amplitudeTolerance))
-        })
+        return await Promise.race([
+            this.gainDiscover(calibrationOptions, centralAmplitude, currentAmplitude, this.Gain.gain.value, gainStep, amplitudeTolerance),
+            this.AsyncDelay(calibrationOptions.CalibrationTimeOut).then(() => { return { success: false, msg: "Tempo de calibração do microfone foi excedido" } })
+        ])
     }
 
     static async gainDiscover(calibrationOptions, centralAmplitude, currentAmplitude, initialGain, gainStep, amplitudeTolerance) {
