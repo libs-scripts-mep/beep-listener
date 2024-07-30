@@ -40,7 +40,7 @@ Realize a importação:
 import BeepListener from "../node_modules/@libs-scripts-mep/beep-listener/beep-listener.js"
 ```
 
-Os métodos que serão utilizados no script são `Init()` e `Capture()`. `FrequencyReader()` e `ConfigDeterminator()` servem para configurar o `Capture()`.
+Os métodos que serão utilizados no script são `Init()`, `calibrateMic()` e `Capture()`. `FrequencyReader()` e `ConfigDeterminator()` servem para configurar o `Capture()`.
 <br>
 Informações detalhadas estão disponíveis via `JSDocs`.
 
