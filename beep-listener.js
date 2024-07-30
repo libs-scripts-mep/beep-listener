@@ -770,6 +770,16 @@ export default class BeepListener {
         )
     }
 
+
+    /**
+     * Sets the gain value of the Gain node.
+     *
+     * @param {number} gain - The new gain value to set.
+     */
+    static setGain(gain) {
+        this.Gain.gain.value = gain
+    }
+
     /**
      * 
      * @param {number} TempoTotalLeitura tempo em que serão pegas as amostras de frequência
