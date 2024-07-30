@@ -718,8 +718,7 @@ export default class BeepListener {
             if (Math.abs(newAmplitude - centralAmplitude) <= amplitudeTolerance) {
                 Log.console(`Novo valor de ganho: ${this.Gain.gain.value}
                 Amplitude: ${newAmplitude}`, Log.Colors.Green.Cyan)
-                sessionStorage.setItem("GainNodeValue", this.Gain.gain.value)
-                return true
+                return { success: true, msg: `Sucesso ao ajustar o ganho`, gain: this.Gain.gain.value }
             }
 
             currentAmplitude = newAmplitude
