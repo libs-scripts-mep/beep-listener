@@ -260,9 +260,9 @@ export default class BeepListener {
         while (this.AudioContext.state == "running") {
             const sample = await this.getData(0, true)
 
-            if (sample.frequencia[0] >= ConfigObj.MinFreq && sample.frequencia[0] <= ConfigObj.MaxFreq) {
-                if (ConfigObj.AmplitudeValidation) {
-                    if (sample.amplitude[0] >= ConfigObj.MinAmplitude && sample.amplitude[0] <= ConfigObj.MaxAmplitude) { return }
+            if (sample.frequencia[0] >= ConfigObj.minFreq && sample.frequencia[0] <= ConfigObj.maxFreq) {
+                if (ConfigObj.amplitudeValidation) {
+                    if (sample.amplitude[0] >= ConfigObj.minAmplitude && sample.amplitude[0] <= ConfigObj.maxAmplitude) { return }
                 } else { return }
             }
 
@@ -285,7 +285,7 @@ export default class BeepListener {
         const filteredTrack = this.trackFilter(track, ConfigObj)
         const media = this.calculaMediaFreqAmp(filteredTrack.frequencia, filteredTrack.amplitude)
 
-        if (ConfigObj.AmplitudeValidation && media.amplitude < ConfigObj.MinAmplitude || media.amplitude > ConfigObj.MaxAmplitude) {
+        if (ConfigObj.amplitudeValidation && media.amplitude < ConfigObj.minAmplitude || media.amplitude > ConfigObj.maxAmplitude) {
             return { result: false }
         }
 
@@ -307,7 +307,7 @@ export default class BeepListener {
     static trackFilter(track, ConfigObj) {
         const amplitudeArray = []
         const frequencyArray = track.frequencia.filter((value, index) => {
-            if (value >= ConfigObj.MinFreq && value <= ConfigObj.MaxFreq) {
+            if (value >= ConfigObj.minFreq && value <= ConfigObj.maxFreq) {
                 amplitudeArray.push(track.amplitude[index])
                 return true
             }
@@ -337,9 +337,9 @@ export default class BeepListener {
      * @returns {boolean}
      */
     static validaPorcentagemAcionamentos(track, ConfigObj) {
-        const validTrackSampleQuantity = track.length * (ConfigObj.PorcentagemAcionamentosValidos / 100)
+        const validTrackSampleQuantity = track.length * (ConfigObj.validTrackPercentage / 100)
 
-        const filteredArray = track.filter(frequencia => frequencia >= ConfigObj.MinFreq && frequencia <= ConfigObj.MaxFreq)
+        const filteredArray = track.filter(frequencia => frequencia >= ConfigObj.minFreq && frequencia <= ConfigObj.maxFreq)
 
         return filteredArray.length >= validTrackSampleQuantity
     }
@@ -353,7 +353,7 @@ export default class BeepListener {
             await this.frequencyTrigger(ConfigObj)
             if (this.AudioContext.state != "running") { return }
 
-            const track = await this.getData(ConfigObj.TrackSize)
+            const track = await this.getData(ConfigObj.trackSize)
             this.lastRead = track
 
             const validatedTrack = this.trackValidator(track, ConfigObj)
@@ -381,7 +381,8 @@ export default class BeepListener {
         initOptions.gain ??= 1
         initOptions.deviceId ??= undefined
 
-        if (!await CheckValues()) { return { success: false, msg: "Valores de configuração inválidos" } }
+        const checkParams = ParameterValidator.validate(initOptions)
+        if (!checkParams.success) { return checkParams }
 
         const getDevice = await this.getAudioDevice(initOptions.deviceId)
         if (getDevice.result) {
@@ -397,71 +398,51 @@ export default class BeepListener {
         }
 
         return { success: false, msg: "Falha na inicialização do microfone" }
-
-        async function CheckValues() {
-            const TypeCheck = await Promise.all([
-                BeepListener.CheckType("SampleRate", initOptions.sampleRate, "number"),
-                BeepListener.CheckType("FFTSize", initOptions.fftSize, "number"),
-                BeepListener.CheckType("SmoothingTimeConstant", initOptions.smoothingTimeConstant, "number"),
-                BeepListener.CheckType("Gain", initOptions.gain, "number")
-            ])
-
-            for (const result of TypeCheck) {
-                if (!result) { return false }
-            }
-
-            const RangeCheck = await Promise.all([
-                BeepListener.CheckRange("SampleRate", initOptions.sampleRate, 8000, 96000),
-                BeepListener.CheckRange("FFTSize", initOptions.fftSize, 32, 32768),
-                BeepListener.CheckRange("SmoothingTimeConstant", initOptions.smoothingTimeConstant, 0, 1)
-            ])
-
-            for (const result of RangeCheck) {
-                if (!result) { return false }
-            }
-
-            if (!Number.isInteger(Math.log(initOptions.fftSize) / Math.log(2))) {
-                console.error("O valor de FFTSize não é uma potência de 2")
-                return false
-            }
-
-            return true
-        }
     }
 
     /**
      * Valida o acionamento do beep
      * @param {{
-     *     MinFreq?: number,
-     *     MaxFreq?: number,
-     *     AmplitudeValidation?: boolean,
-     *     MinAmplitude?: number,
-     *     MaxAmplitude?: number,
-     *     PorcentagemAcionamentosValidos?: number,
-     *     TrackSize?: number,
-     *     TimeOut?: number
+     *     minFreq?: number,
+     *     maxFreq?: number,
+     *     amplitudeValidation?: boolean,
+     *     minAmplitude?: number,
+     *     maxAmplitude?: number,
+     *     validTrackPercentage?: number,
+     *     trackSize?: number,
+     *     timeOut?: number
      * }} [ConfigObj] objeto com configurações para realizar a captura do beep
-     * @returns {Promise<{ success: boolean, msg: string }>} Objeto com o resultado da validação
+     * @returns {Promise<{ 
+     *     success: boolean, 
+     *     msg: string,
+     *     frequencia?: {
+     *         values: number[],
+     *         frequenciaMedia: number,
+     *     },
+     *     amplitude?: {
+     *         values: number[],
+     *         amplitudeMedia: number,
+     *     }
+     * }>} Objeto com o resultado da validação
      */
     static async capture(ConfigObj = {}) {
-        ConfigObj.MinFreq ??= 2950
-        ConfigObj.MaxFreq ??= 3050
+        ConfigObj.minFreq ??= 2950
+        ConfigObj.maxFreq ??= 3050
+        ConfigObj.amplitudeValidation ??= true
+        ConfigObj.minAmplitude ??= -30
+        ConfigObj.maxAmplitude ??= -20
+        ConfigObj.validTrackPercentage ??= 70
+        ConfigObj.trackSize ??= 500
+        ConfigObj.timeOut ??= 10000
 
-        ConfigObj.AmplitudeValidation ??= true
-        ConfigObj.MinAmplitude ??= -30
-        ConfigObj.MaxAmplitude ??= -20
-
-        ConfigObj.PorcentagemAcionamentosValidos ??= 70
-        ConfigObj.TrackSize ??= 500
-        ConfigObj.TimeOut ??= 10000
-
-        if (!await CheckValues()) { return { success: false, msg: "Valores de configuração inválidos" } }
+        const checkParams = ParameterValidator.validate(ConfigObj)
+        if (!checkParams.success) { return checkParams }
 
         this.lastRead = {}
 
         await this.AudioContext.resume()
 
-        const capture = await Promise.race([this.trackCapture(ConfigObj), this.delay(ConfigObj.TimeOut)])
+        const capture = await Promise.race([this.trackCapture(ConfigObj), this.delay(ConfigObj.timeOut)])
 
         await this.AudioContext.suspend()
 
@@ -492,60 +473,19 @@ export default class BeepListener {
                 }
             }
         }
-
-
-        async function CheckValues() {
-            const TypeCheck = await Promise.all([
-                BeepListener.CheckType("MinFreq", ConfigObj.MinFreq, "number"),
-                BeepListener.CheckType("MaxFreq", ConfigObj.MaxFreq, "number"),
-                BeepListener.CheckType("AmplitudeValidation", ConfigObj.AmplitudeValidation, "boolean"),
-                BeepListener.CheckType("MinAmplitude", ConfigObj.MinAmplitude, "number"),
-                BeepListener.CheckType("MaxAmplitude", ConfigObj.MaxAmplitude, "number"),
-                BeepListener.CheckType("PorcentagemAcionamentosValidos", ConfigObj.PorcentagemAcionamentosValidos, "number"),
-                BeepListener.CheckType("TrackSize", ConfigObj.TrackSize, "number"),
-                BeepListener.CheckType("TimeOut", ConfigObj.TimeOut, "number"),
-            ])
-
-            for (const result of TypeCheck) {
-                if (!result) { return false }
-            }
-
-            const RangeCheck = await Promise.all([
-                BeepListener.CheckRange("MinFreq", ConfigObj.MinFreq, 0, Infinity),
-                BeepListener.CheckRange("MaxFreq", ConfigObj.MaxFreq, 0, Infinity),
-                BeepListener.CheckRange("PorcentagemAcionamentosValidos", ConfigObj.PorcentagemAcionamentosValidos, 0, 100),
-                BeepListener.CheckRange("TrackSize", ConfigObj.TrackSize, 0, Infinity),
-                BeepListener.CheckRange("TimeOut", ConfigObj.TimeOut, 0, Infinity),
-            ])
-
-            for (const result of RangeCheck) {
-                if (!result) { return false }
-            }
-
-            const ScaleCheck = await Promise.all([
-                BeepListener.CheckScale("MinFreq", "MaxFreq", ConfigObj.MinFreq, ConfigObj.MaxFreq),
-                BeepListener.CheckScale("MinAmplitude", "MaxAmplitude", ConfigObj.MinAmplitude, ConfigObj.MaxAmplitude)
-            ])
-
-            for (const result of ScaleCheck) {
-                if (!result) { return false }
-            }
-
-            return true
-        }
     }
 
     /**
      * Ajusta o ganho do microfone e retorna o valor.
      * @param {{
-     * MinAmplitude: number, 
-     * MaxAmplitude: number,
-     * PorcentagemAcionamentosValidos: number,
-     * MinFreq: number,
-     * MaxFreq: number,
-     * TrackSize: number,
-     * FirstReadTimeOut: number,
-     * CalibrationTimeOut: number
+     * minAmplitude: number, 
+     * maxAmplitude: number,
+     * validTrackPercentage: number,
+     * minFreq: number,
+     * maxFreq: number,
+     * trackSize: number,
+     * firstReadTimeOut: number,
+     * calibrationTimeOut: number
      * }} calibrationOptions
      * @param {number} amplitudeTolerance
      * @param {number} gainStep
@@ -561,24 +501,27 @@ export default class BeepListener {
      * } else { BeepListener.setGain(parseFloat(sessionStorage.getItem("gain"))) }
     */
     static async calibrateMic(calibrationOptions = {}, amplitudeTolerance = 2, gainStep = 1) {
-        calibrationOptions.MinAmplitude ??= -30
-        calibrationOptions.MaxAmplitude ??= -20
-        calibrationOptions.PorcentagemAcionamentosValidos ??= 70
-        calibrationOptions.MinFreq ??= 3050
-        calibrationOptions.MaxFreq ??= 3250
-        calibrationOptions.TrackSize ??= 300
-        calibrationOptions.FirstReadTimeOut ??= 5000
-        calibrationOptions.CalibrationTimeOut ??= 10000
+        calibrationOptions.minAmplitude ??= -30
+        calibrationOptions.maxAmplitude ??= -20
+        calibrationOptions.validTrackPercentage ??= 70
+        calibrationOptions.minFreq ??= 3050
+        calibrationOptions.maxFreq ??= 3250
+        calibrationOptions.trackSize ??= 300
+        calibrationOptions.firstReadTimeOut ??= 5000
+        calibrationOptions.calibrationTimeOut ??= 10000
+
+        const checkParams = ParameterValidator.validate(calibrationOptions)
+        if (!checkParams.success) { return checkParams }
 
         const firstRead = await Promise.race([
             BeepListener.configDeterminator(calibrationOptions),
-            this.delay(calibrationOptions.FirstReadTimeOut).then(() => false)
+            this.delay(calibrationOptions.firstReadTimeOut).then(() => false)
         ])
 
         if (!firstRead) { return { success: false, msg: "Nenhuma faixa detectada na frequência esperada" } }
 
         const currentAmplitude = firstRead.amplitude.media
-        const centralAmplitude = (calibrationOptions.MinAmplitude + calibrationOptions.MaxAmplitude) / 2
+        const centralAmplitude = (calibrationOptions.minAmplitude + calibrationOptions.maxAmplitude) / 2
         if (Math.abs(currentAmplitude - centralAmplitude) <= amplitudeTolerance) {
             Log.console(`Novo valor de ganho: ${this.GainNode.gain.value}`, Log.Colors.Green.Cyan)
             return { success: true, msg: `Sucesso ao ajustar o ganho`, gain: this.GainNode.gain.value }
@@ -586,19 +529,19 @@ export default class BeepListener {
 
         return await Promise.race([
             this.gainDiscover(calibrationOptions, centralAmplitude, currentAmplitude, this.GainNode.gain.value, gainStep, amplitudeTolerance),
-            this.delay(calibrationOptions.CalibrationTimeOut).then(() => { return { success: false, msg: "Tempo de calibração do microfone foi excedido" } })
+            this.delay(calibrationOptions.calibrationTimeOut).then(() => { return { success: false, msg: "Tempo de calibração do microfone foi excedido" } })
         ])
     }
 
     /**
      * 
      * @param {{
-     * MinAmplitude: number,
-     * MaxAmplitude: number,
-     * PorcentagemAcionamentosValidos: number,
-     * MinFreq: number,
-     * MaxFreq: number,
-     * TrackSize: number
+     * minAmplitude: number,
+     * maxAmplitude: number,
+     * validTrackPercentage: number,
+     * minFreq: number,
+     * maxFreq: number,
+     * trackSize: number
      * }} calibrationOptions
      * @param {number} centralAmplitude 
      * @param {number} currentAmplitude
@@ -679,11 +622,11 @@ export default class BeepListener {
     /**
      * 
      * @param {{
-     *     MinFreq?: number,
-     *     MaxFreq?: number,
-     *     PorcentagemAcionamentosValidos?: number,
-     *     TrackSize?: number
-     *     AmplitudeValidation?: boolean
+     *     minFreq?: number,
+     *     maxFreq?: number,
+     *     validTrackPercentage?: number,
+     *     trackSize?: number
+     *     amplitudeValidation?: boolean
      * }} [ConfigObj] objeto com configurações para detecção da faixa
      * @returns {Promise<{
      *     success: boolean,
@@ -695,23 +638,24 @@ export default class BeepListener {
      * console.log(await BeepListener.configDeterminator())
      */
     static async configDeterminator(ConfigObj = {}) {
-        ConfigObj.MinFreq ??= 2950
-        ConfigObj.MaxFreq ??= 3050
-        ConfigObj.PorcentagemAcionamentosValidos ??= 70
-        ConfigObj.TrackSize ??= 500
-        ConfigObj.AmplitudeValidation = false
-        ConfigObj.TimeOut ??= 10000
+        ConfigObj.minFreq ??= 2950
+        ConfigObj.maxFreq ??= 3050
+        ConfigObj.validTrackPercentage ??= 70
+        ConfigObj.trackSize ??= 500
+        ConfigObj.amplitudeValidation = false
+        ConfigObj.timeOut ??= 10000
 
-        if (!await CheckValues()) { return { success: false, msg: "Valores de configuração são inválidos" } }
+        const checkParams = ParameterValidator.validate(ConfigObj)
+        if (!checkParams.success) { return checkParams }
 
         await this.AudioContext.resume()
-        this.delay(ConfigObj.TimeOut).then(() => { this.AudioContext.suspend() })
+        this.delay(ConfigObj.timeOut).then(() => { this.AudioContext.suspend() })
 
         while (this.AudioContext.state == "running") {
             await this.frequencyTrigger(ConfigObj)
             if (this.AudioContext.state == "suspended") { return { success: false, msg: "Falha na detecção da faixa esperada" } }
 
-            const Track = await this.getData(ConfigObj.TrackSize)
+            const Track = await this.getData(ConfigObj.trackSize)
 
             const ValidatedTrack = this.trackValidator(Track, ConfigObj)
 
@@ -735,87 +679,210 @@ export default class BeepListener {
                 }
             }
         }
-
-        async function CheckValues() {
-            const TypeCheck = await Promise.all([
-                BeepListener.CheckType("MinFreq", ConfigObj.MinFreq, "number"),
-                BeepListener.CheckType("MaxFreq", ConfigObj.MaxFreq, "number"),
-                BeepListener.CheckType("PorcentagemAcionamentosValidos", ConfigObj.PorcentagemAcionamentosValidos, "number"),
-                BeepListener.CheckType("TrackSize", ConfigObj.TrackSize, "number")
-            ])
-
-            for (const result of TypeCheck) {
-                if (!result) { return false }
-            }
-
-            const RangeCheck = await Promise.all([
-                BeepListener.CheckRange("MinFreq", ConfigObj.MinFreq, 0, Infinity),
-                BeepListener.CheckRange("MaxFreq", ConfigObj.MaxFreq, 0, Infinity),
-                BeepListener.CheckRange("PorcentagemAcionamentosValidos", ConfigObj.PorcentagemAcionamentosValidos, 0, 100),
-                BeepListener.CheckRange("TrackSize", ConfigObj.TrackSize, 0, Infinity)
-            ])
-
-            for (const result of RangeCheck) {
-                if (!result) { return false }
-            }
-
-            if (!BeepListener.CheckScale("MinFreq", "MaxFreq", ConfigObj.MinFreq, ConfigObj.MaxFreq)) { return false }
-
-            return true
-        }
-    }
-
-    /**
-     * Usado para validar se os parâmetros passados nos métodos são do tipo esperado
-     * @param {string} Name nome do parâmetro
-     * @param {number} Value valor do parâmetro
-     * @param {string} ExpectedType tipo que o parâmetro deve ser
-     * @returns true se o parâmetro for do tipo esperado, false se não for
-     */
-    static CheckType(Name, Value, ExpectedType) {
-        if (typeof Value == ExpectedType) {
-            return true
-        } else {
-            console.error(`${Name} não é do tipo ${ExpectedType}`)
-            return false
-        }
-    }
-
-    /**
-     * Usado para validar se os parâmetros passados nos métodos estão dentro do range esperado
-     * @param {string} Name nome do parâmetro
-     * @param {number} Value valor do parâmetro
-     * @param {number} MinValue valor mínimo que o parâmetro deve ter
-     * @param {number} MaxValue valor máximo que o parâmetro deve ter
-     * @returns true se o valor estiver dentro do range, false se não estiver
-     */
-    static CheckRange(Name, Value, MinValue, MaxValue) {
-        if (Value >= MinValue && Value <= MaxValue) {
-            return true
-        } else {
-            console.error(`${Name} está fora do range [${MinValue} - ${MaxValue}]`)
-            return false
-        }
-    }
-
-    /**
-     * Usado para verificar se a escala formada por dois parâmetros é valida,
-     * ou seja, para evitar que o valor mínimo seja maior que o valor máximo
-     * @param {string} MinValueName nome do parâmetro que indica o valor mínimo
-     * @param {string} MaxValueName nome do parâmetro que indica o valor máximo
-     * @param {number} MinValue valor do parâmetro que indica o valor mínimo
-     * @param {number} MaxValue valor do parâmetro que indica o valor máximo
-     * @returns true caso seja uma escala válida, false se não for
-     */
-    static CheckScale(MinValueName, MaxValueName, MinValue, MaxValue) {
-        if (MinValue <= MaxValue) {
-            return true
-        } else {
-            console.error(`Escala inválida, ${MinValueName} é maior que ${MaxValueName}`)
-            return false
-        }
     }
 
     static { window.BeepListener = this }
 
+}
+
+export class ParameterValidator {
+
+    static parameterCheckConfigs = {
+        sampleRate: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.sampleRate.value] },
+                message: "sampleRate deve ser um número"
+            },
+            valueCheck: {
+                condition: (value) => value >= 8000 && value <= 96000,
+                get params() { return [ParameterValidator.parameterCheckConfigs.sampleRate.value] },
+                message: "sampleRate deve estar entre 8000 e 96000"
+            }
+        },
+        fftSize: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.fftSize.value] },
+                message: "fftSize deve ser um número"
+            },
+            valueCheck: {
+                condition: (value) => value >= 32 && value <= 32768 && Number.isInteger(Math.log(value) / Math.log(2)),
+                get params() { return [ParameterValidator.parameterCheckConfigs.fftSize.value] },
+                message: "fftSize deve estar entre 32 e 32768 e deve ser uma potência de 2"
+            }
+        },
+        smoothingTimeConstant: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.smoothingTimeConstant.value] },
+                message: "smoothingTimeConstant deve ser um número"
+            },
+            valueCheck: {
+                condition: (value) => value >= 0 && value <= 1,
+                get params() { return [ParameterValidator.parameterCheckConfigs.smoothingTimeConstant.value] },
+                message: "smoothingTimeConstant deve estar entre 0 e 1"
+            }
+        },
+        gain: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.gain.value] },
+                message: "gain deve ser um número"
+            }
+        },
+        deviceId: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "string" || value == undefined,
+                get params() { return [ParameterValidator.parameterCheckConfigs.deviceId.value] },
+                message: "deviceId deve ser uma string ou undefined"
+            }
+        },
+        minFreq: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.minFreq.value] },
+                message: "minFreq deve ser um número"
+            },
+            valueCheck: {
+                condition: (value) => value > 0,
+                get params() { return [ParameterValidator.parameterCheckConfigs.minFreq.value] },
+                message: "minFreq deve ser maior que 0"
+            },
+            rangeCheck: {
+                condition: (minFreq, maxFreq) => minFreq <= maxFreq,
+                get params() { return [ParameterValidator.parameterCheckConfigs.minFreq.value, ParameterValidator.parameterCheckConfigs.maxFreq.value] },
+                message: "minFreq deve ser menor ou igual a maxFreq"
+            }
+        },
+        maxFreq: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.maxFreq.value] },
+                message: "maxFreq deve ser um número"
+            },
+            valueCheck: {
+                condition: (value) => value > 0,
+                get params() { return [ParameterValidator.parameterCheckConfigs.maxFreq.value] },
+                message: "maxFreq deve ser maior que 0"
+            }
+        },
+        amplitudeValidation: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "boolean",
+                get params() { return [ParameterValidator.parameterCheckConfigs.amplitudeValidation.value] },
+                message: "amplitudeValidation deve ser um booleano"
+            }
+        },
+        minAmplitude: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.minAmplitude.value] },
+                message: "minAmplitude deve ser um número"
+            },
+            rangeCheck: {
+                condition: (minAmplitude, maxAmplitude) => minAmplitude <= maxAmplitude,
+                get params() { return [ParameterValidator.parameterCheckConfigs.minAmplitude.value, ParameterValidator.parameterCheckConfigs.maxAmplitude.value] },
+                message: "minAmplitude deve ser menor ou igual a maxAmplitude"
+            }
+        },
+        maxAmplitude: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.maxAmplitude.value] },
+                message: "maxAmplitude deve ser um número"
+            }
+        },
+        validTrackPercentage: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.validTrackPercentage.value] },
+                message: "validTrackPercentage deve ser um número"
+            },
+            valueCheck: {
+                condition: (value) => value >= 0 && value <= 100,
+                get params() { return [ParameterValidator.parameterCheckConfigs.validTrackPercentage.value] },
+                message: "validTrackPercentage deve estar entre 0 e 100"
+            }
+        },
+        trackSize: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.trackSize.value] },
+                message: "trackSize deve ser um número"
+            },
+            valueCheck: {
+                condition: (value) => value > 0,
+                get params() { return [ParameterValidator.parameterCheckConfigs.trackSize.value] },
+                message: "trackSize deve ser maior que 0"
+            }
+        },
+        timeOut: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.timeOut.value] },
+                message: "timeOut deve ser um número"
+            }
+        },
+        firstReadTimeOut: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.firstReadTimeOut.value] },
+                message: "firstReadTimeOut deve ser um número"
+            }
+        }
+    }
+
+    /**
+     * @param {{[parameterName: string]: number | string | boolean | undefined}} params
+     */
+    static validate(params) {
+        for (const parameter in params) {
+            if (!(parameter in this.parameterCheckConfigs)) {
+                return { success: false, message: `Parâmetro ${parameter} não está configurado no objeto parameterCheckConfigs` }
+            }
+
+            this.parameterCheckConfigs[parameter].value = params[parameter]
+        }
+
+        const validationOptions = ["typeCheck", "valueCheck", "rangeCheck"]
+
+        for (const validationType of validationOptions) {
+            for (const parameter in params) {
+                if (validationType in this.parameterCheckConfigs[parameter]) {
+                    const check = this.check(
+                        this.parameterCheckConfigs[parameter][validationType].condition,
+                        this.parameterCheckConfigs[parameter][validationType].params,
+                        this.parameterCheckConfigs[parameter][validationType].message
+                    )
+
+                    if (!check.success) { return check }
+                }
+            }
+        }
+
+        return { success: true }
+    }
+
+    /**
+     * 
+     * @param {function(...arg0): boolean} condition
+     * @param {array} params
+     * @param {string} message
+     */
+    static check(condition, params, message) { return condition(...params) ? { success: true } : { success: false, message } }
 }
