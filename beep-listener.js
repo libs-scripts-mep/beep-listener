@@ -1,11 +1,34 @@
-import Log from "../script-loader/utils-script.js"
-
 /**
  * Classe que faz a manipulação dos dados obtidos pelo microfone, permitindo a validação do beep dos controladores
  * @example
  * import BeepListener from "../node_modules/@libs-scripts-mep/beep-listener/beep-listener.js"
  */
 export default class BeepListener {
+    //#region TypeDefinitions
+
+    /**
+     * @typedef {{
+     *     minFreq: number,
+     *     maxFreq: number,
+     *     amplitudeValidation: boolean,
+     *     validTrackPercentage: number,
+     *     trackSize: number,
+     *     minAmplitude?: number,
+     *     maxAmplitude?: number,
+     *     timeOut?: number,
+     *     firstReadTimeOut?: number,
+     *     calibrationTimeOut?: number
+     * }} captureOptions Objeto com opções para realizar a captura do beep
+     * 
+     * @typedef {{
+     *     frequencia: number[],
+     *     amplitude: number[]
+     * }} track Objeto com os arrays de frequência e amplitude
+    */
+
+    //#endregion TypeDefinitions
+
+    //#region Properties
 
     /** 
      * Instância do [AudioContext](https://developer.mozilla.org/en-US/docs/Web/API/AudioContext) do BeepListener
@@ -39,20 +62,18 @@ export default class BeepListener {
     static hertzPerDivision
 
     /**
-     * Armazena a última faixa lida, permite retornar algo quando a faixa esperada não é detectada
-     * @type Object
+     * Armazena as últimas leituras, permite visualizar o que foi lido quando ocorrem erros
+     * @type {track[]}
      */
-    static lastRead
-
-    /**
-     * Indica se uma faixa na frequência esperada foi encontrada, permite diferenciar quando a falha ocorreu por frequência ou amplitude
-     * @type boolean
-     */
-    static EncontrouTrackFrequencia
+    static lastReads = []
+    //#endregion Properties
 
     //#region DeviceIds
 
-    /** Localiza o ID de um dispositivo baseado no filtro passado */
+    /** 
+     * Localiza o ID de um dispositivo baseado no filtro passado
+     * @param {function({ kind: string, label: string, deviceId: string }): boolean} deviceFilter Filtro para encontrar o dispositivo
+     */
     static async findDeviceId(deviceFilter) {
         const DeviceList = await navigator.mediaDevices.enumerateDevices()
         const Device = DeviceList.find(deviceFilter)
@@ -60,7 +81,7 @@ export default class BeepListener {
     }
 
     /**
-     * Webcam Logitech C930e
+     * Localiza o ID da Webcam Logitech C930e
      * 
      * ![Image](https://i.imgur.com/9YnqdVk.png)
      */
@@ -70,7 +91,7 @@ export default class BeepListener {
     }
 
     /**
-     * Microfone de lapela USB HS-29
+     * Localiza o ID do Microfone de lapela USB HS-29
      * 
      * ![Image](https://i.imgur.com/DffAe6i.png)
      */
@@ -79,6 +100,48 @@ export default class BeepListener {
         return await this.findDeviceId(filter)
     }
     //#endregion DeviceIds
+
+    //#region Init
+
+    /**
+    * Inicializa o microfone e cria as instâncias do AudioContext e AnalyserNode
+    * @param {{
+    *     sampleRate?: number,
+    *     fftSize?: number,
+    *     smoothingTimeConstant?: number,
+    *     gain?: number,
+    *     deviceId?: string
+    * }} initOptions
+    * @returns {Promise<{success: boolean, msg?: string}>}
+    * @example
+    * const init = await BeepListener.init({ DeviceId: await BeepListener.C930e() })
+    * if (!init.success) // setar erro
+    */
+    static async init(initOptions = {}) {
+        initOptions.sampleRate ??= 48000
+        initOptions.fftSize ??= 2048
+        initOptions.smoothingTimeConstant ??= 0.8
+        initOptions.gain ??= 1
+        initOptions.deviceId ??= undefined
+
+        const checkParams = ParameterValidator.validate(initOptions)
+        if (!checkParams.success) { return checkParams }
+
+        const getDevice = await this.getAudioDevice(initOptions.deviceId)
+        if (getDevice.result) {
+            this.createAudioContext(getDevice.device, initOptions.sampleRate)
+            this.createAnalyser(initOptions.fftSize, initOptions.smoothingTimeConstant, initOptions.gain)
+            await this.AudioContext.suspend()
+
+            this.hertzPerDivision = initOptions.sampleRate / initOptions.fftSize
+
+            console.log(`%cAudioContext latency -> ${this.AudioContext.baseLatency * 1000}ms`, "color: #00FFFF")
+
+            return { success: true, msg: "Inicialização do microfone concluída com sucesso" }
+        }
+
+        return { success: false, msg: "Falha na inicialização do microfone" }
+    }
 
     /**
      * Detecta o microfone utilizando [getUserMedia()](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)
@@ -126,18 +189,20 @@ export default class BeepListener {
         this.GainNode.connect(this.Analyser)
         // this.Analyser.connect(this.AudioContext.destination) //Descomentar para jogar o som lido pelo microfone no alto-falante.
     }
+    //#endregion Init
 
+    //#region DataAcquisition
 
     /**
-     *  
+     * Retorna um objeto com os valores de frequência e amplitude obtidos no tempo que foi passado
      * @param {number} time Tempo em que serão obtidas as amostras de frequência e amplitude
-     * @param {boolean} [triggerSample] Se true, será obtida apenas uma amostra de frequência e amplitude para utilizar como trigger
-     * @returns objeto com os arrays de frequência e amplitude
+     * @param {boolean} triggerSample Se true, será obtida apenas uma amostra de frequência e amplitude para utilizar como trigger
+     * @returns {Promise<track>}
      * 
      */
     static async getData(time, triggerSample = false) {
         /**@type {number[]} */
-        const frequencyDataBuffer = []
+        const frequencyBuffer = []
         /**@type {number[]} */
         const amplitudeBuffer = []
 
@@ -146,11 +211,11 @@ export default class BeepListener {
         if (!triggerSample) { this.delay(time).then(() => { loopControl = false }) }
 
         while (loopControl) {
-            const signal = this.freq()
-            const frequencia = this.pitch(signal.timeDomain)
-            frequencyDataBuffer.push(frequencia)
+            const sample = this.freqSample()
+            const frequency = this.pitch(sample.timeDomain)
+            frequencyBuffer.push(frequency)
 
-            const amplitude = this.findAmplitude(frequencia, signal.frequencia)
+            const amplitude = this.findAmplitude(frequency, sample.frequencyDomain)
             amplitudeBuffer.push(amplitude)
 
             await this.delay(0) // Precisa disto para não travar o navegador
@@ -158,13 +223,13 @@ export default class BeepListener {
             if (triggerSample) { break }
         }
 
-        const finalData = this.fixValues(frequencyDataBuffer, amplitudeBuffer)
+        const roundedValues = this.fixValues(frequencyBuffer, amplitudeBuffer)
 
-        return { frequencia: finalData.frequencia, amplitude: finalData.amplitude }
+        return { frequencia: roundedValues.frequencia, amplitude: roundedValues.amplitude }
     }
 
     /**
-     * Permite extrair do TimeDomainArray o valor da frequência 
+     * Permite extrair um valor de frequência do TimeDomainArray  
      * @param {Float32Array} timeDomainArray array do TimeDomain
      * @returns {number} valor de frequência
      */
@@ -209,83 +274,62 @@ export default class BeepListener {
 
     /**
      * Arredonda os valores dos arrays para no máximo duas casas decimais
-     * @param {number[]} FreqBuffer array da frequência
-     * @param {number[]} AmpBuffer array da amplitude
-     * @returns arrays com valores arredondados
+     * @param {number[]} freqBuffer array da frequência
+     * @param {number[]} ampBuffer array da amplitude
+     * @returns {track}
      */
-    static fixValues(FreqBuffer, AmpBuffer) {
-        return { frequencia: fix(FreqBuffer), amplitude: fix(AmpBuffer) }
+    static fixValues(freqBuffer, ampBuffer) {
+        return { frequencia: fix(freqBuffer), amplitude: fix(ampBuffer) }
 
         /**
          * @param {number[]} buffer
          */
         function fix(buffer) {
-            return buffer.map(value => {
-                if (!isNaN(value) && !Number.isInteger(value)) { return parseFloat(value.toFixed(2)) }
-                return value
-            })
+            return buffer.map(value => !isNaN(value) && !Number.isInteger(value) ? parseFloat(value.toFixed(2)) : value)
         }
     }
 
     /**
-     * Obtém e retorna arrays com frequência e amplitude, usando
+     * Obtém uma amostra e retorna os arrays do domínio da frequência e do domínio do tempo, usando
      * [getFloatTimeDomainData()](https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode/getFloatTimeDomainData) e
      * [getFloatFrequencyData()](https://developer.mozilla.org/en-US/docs/Web/API/AnalyserNode/getFloatFrequencyData)
-     * @returns objeto com os arrays de frequency e time domain
      */
-    static freq() {
+    static freqSample() {
         const frequencyDataArray = new Float32Array(this.Analyser.fftSize)
         const timeDomainDataArray = new Float32Array(this.Analyser.fftSize)
 
         this.Analyser.getFloatTimeDomainData(timeDomainDataArray)
         this.Analyser.getFloatFrequencyData(frequencyDataArray)
 
-        return { timeDomain: timeDomainDataArray, frequencia: frequencyDataArray }
+        return { timeDomain: timeDomainDataArray, frequencyDomain: frequencyDataArray }
     }
 
-
     /**
-     * 
+     * Retorna o valor de amplitude referente à frequência passada
      * @param {number} frequency frequência de referência
      * @param {Float32Array} amplitudeArray array do domínio da frequência
      * @returns {number} valor de amplitude referente à frequência passada
      */
     static findAmplitude(frequency, amplitudeArray) { return amplitudeArray[Math.round(frequency / this.hertzPerDivision)] }
+    //#endregion DataAcquisition
+
+    //#region DataValidation
 
     /**
-     * Verifica a frequência a cada 50ms e retorna caso ela esteja dentro dos valores de frequência e, opcionalmente, de amplitude
-     * @param {object} ConfigObj objeto com os valores para fazer a detecção do trigger
+     * Valida se a track passada está dentro dos valores de frequência e amplitude esperados
+     * @param {track} track objeto com os arrays de frequência e amplitude
+     * @param {captureOptions} captureOptions objeto com os valores de frequência
+     * @returns {{ result: boolean, frequencia?: number[], frequenciaMedia?: number, amplitude?: number[], amplitudeMedia?: number }}
      */
-    static async frequencyTrigger(ConfigObj) {
-        while (this.AudioContext.state == "running") {
-            const sample = await this.getData(0, true)
+    static trackValidator(track, captureOptions) {
 
-            if (sample.frequencia[0] >= ConfigObj.minFreq && sample.frequencia[0] <= ConfigObj.maxFreq) {
-                if (ConfigObj.amplitudeValidation) {
-                    if (sample.amplitude[0] >= ConfigObj.minAmplitude && sample.amplitude[0] <= ConfigObj.maxAmplitude) { return }
-                } else { return }
-            }
+        const percentageValidation = this.validateTrackPercentage(track.frequencia, captureOptions)
+        if (!percentageValidation) return { result: false }
 
-            await this.delay(50)
-        }
-    }
+        const filteredTrack = this.trackFilter(track, captureOptions)
+        const media = this.calculateMedia(filteredTrack.frequencia, filteredTrack.amplitude)
 
-    /**
-     * Valida se a track passada está dentro dos valores de frequência e amplitude
-     * @param {object} track objeto com os arrays de frequência e amplitude
-     * @param {object} ConfigObj objeto com os valores de frequência
-     * @returns {{result: boolean, frequencia?: number[], frequenciaMedia?: number, amplitude?: number[], amplitudeMedia?: number}}
-     */
-    static trackValidator(track, ConfigObj) {
-
-        const ValidaPorcentagem = this.validaPorcentagemAcionamentos(track.frequencia, ConfigObj)
-        if (!ValidaPorcentagem) return { result: false }
-        this.EncontrouTrackFrequencia = true
-
-        const filteredTrack = this.trackFilter(track, ConfigObj)
-        const media = this.calculaMediaFreqAmp(filteredTrack.frequencia, filteredTrack.amplitude)
-
-        if (ConfigObj.amplitudeValidation && media.amplitude < ConfigObj.minAmplitude || media.amplitude > ConfigObj.maxAmplitude) {
+        if (captureOptions.amplitudeValidation && (media.amplitude < captureOptions.minAmplitude || media.amplitude > captureOptions.maxAmplitude)) {
             return { result: false }
         }
 
@@ -298,16 +342,16 @@ export default class BeepListener {
         }
     }
 
-
     /**
-     * @param {{frequencia: number[], amplitude: number[]}} track 
-     * @param {object} ConfigObj 
-     * @returns {{frequencia: number[], amplitude: number[]}}
+     * Filtra a track, mantendo apenas os valores de frequência que estão dentro do esperado e suas respectivas amplitudes
+     * @param {track} track 
+     * @param {captureOptions} captureOptions 
+     * @returns {track}
      */
-    static trackFilter(track, ConfigObj) {
+    static trackFilter(track, captureOptions) {
         const amplitudeArray = []
         const frequencyArray = track.frequencia.filter((value, index) => {
-            if (value >= ConfigObj.minFreq && value <= ConfigObj.maxFreq) {
+            if (value >= captureOptions.minFreq && value <= captureOptions.maxFreq) {
                 amplitudeArray.push(track.amplitude[index])
                 return true
             }
@@ -322,7 +366,7 @@ export default class BeepListener {
      * @param {number[]} ampTrack array da amplitude
      * @returns {{frequencia: number, amplitude: number}}
      */
-    static calculaMediaFreqAmp(freqTrack, ampTrack) {
+    static calculateMedia(freqTrack, ampTrack) {
         return {
             frequencia: freqTrack.reduce((accumulator, currentValue) => accumulator + currentValue) / freqTrack.length,
             amplitude: ampTrack.sort((a, b) => a - b)[Math.round(ampTrack.length / 2)]
@@ -330,162 +374,143 @@ export default class BeepListener {
     }
 
     /**
-     * Verifica se o array possui a quantidade mínima de acionamentos válidos.
-     * Por exemplo, em um array com 100 valores e 70% de aceitação, pelo menos 70 destes valores devem estar dentro do range mínimo e máximo da frequência.
-     * @param {number[]} track array com os valores de frequência lidos
-     * @param {object} ConfigObj objeto com os valores de frequência e porcentagem de aceitação
+     * Verifica se o array possui a quantidade mínima de valores dentro do esperado.
+     * Por exemplo, em um array com 100 valores e 70% de aceitação, pelo menos 70 destes valores devem estar dentro do range esperado de frequência.
+     * @param {number[]} frequencyBuffer array com os valores de frequência lidos
+     * @param {captureOptions} captureOptions objeto com os valores de frequência e porcentagem de aceitação
      * @returns {boolean}
      */
-    static validaPorcentagemAcionamentos(track, ConfigObj) {
-        const validTrackSampleQuantity = track.length * (ConfigObj.validTrackPercentage / 100)
+    static validateTrackPercentage(frequencyBuffer, captureOptions) {
+        const validTrackSampleQuantity = frequencyBuffer.length * (captureOptions.validTrackPercentage / 100)
 
-        const filteredArray = track.filter(frequencia => frequencia >= ConfigObj.minFreq && frequencia <= ConfigObj.maxFreq)
+        const filteredArray = frequencyBuffer.filter(frequencia => frequencia >= captureOptions.minFreq && frequencia <= captureOptions.maxFreq)
 
         return filteredArray.length >= validTrackSampleQuantity
     }
+    //#endregion DataValidation
+
+    //#region Capture
 
     /**
-     * Método que aguarda um acionamento do trigger para capturar e validar uma track, retornando a mesma caso ela seja válida.
-     * @param {object} ConfigObj objeto com os valores usados para a validação
-     */
-    static async trackCapture(ConfigObj) {
-        while (this.AudioContext.state == "running") {
-            await this.frequencyTrigger(ConfigObj)
-            if (this.AudioContext.state != "running") { return }
+    * Valida o acionamento do beep
+    * @param {{
+    *     minFreq?: number,
+    *     maxFreq?: number,
+    *     amplitudeValidation?: boolean,
+    *     minAmplitude?: number,
+    *     maxAmplitude?: number,
+    *     validTrackPercentage?: number,
+    *     trackSize?: number,
+    *     timeOut?: number
+    * }} captureOptions objeto com configurações para realizar a captura do beep
+    * @returns {Promise<{ 
+    *     success: boolean, 
+    *     msg: string,
+    *     lastTracks?: track[],
+    *     frequencia?: {
+    *         values: number[],
+    *         frequenciaMedia: number,
+    *     },
+    *     amplitude?: {
+    *         values: number[],
+    *         amplitudeMedia: number,
+    *     }
+    * }>} Objeto com o resultado da validação
+    */
+    static async capture(captureOptions = {}) {
+        captureOptions.minFreq ??= 2950
+        captureOptions.maxFreq ??= 3050
+        captureOptions.amplitudeValidation ??= true
+        captureOptions.minAmplitude ??= -30
+        captureOptions.maxAmplitude ??= -20
+        captureOptions.validTrackPercentage ??= 70
+        captureOptions.trackSize ??= 500
+        captureOptions.timeOut ??= 10000
 
-            const track = await this.getData(ConfigObj.trackSize)
-            this.lastRead = track
-
-            const validatedTrack = this.trackValidator(track, ConfigObj)
-            if (validatedTrack.result) { return validatedTrack }
-        }
-    }
-
-    /**
-     * Inicializa o microfone e cria as instâncias do AudioContext e AnalyserNode
-     * @param {{
-     *     sampleRate?: number,
-     *     fftSize?: number,
-     *     smoothingTimeConstant?: number,
-     *     gain?: number,
-     *     deviceId?: string
-     * }} [initOptions]
-     * @example
-     * const init = await BeepListener.init({ DeviceId: await BeepListener.C930e() })
-     * if (!init.success) // setar erro
-     */
-    static async init(initOptions = {}) {
-        initOptions.sampleRate ??= 48000
-        initOptions.fftSize ??= 2048
-        initOptions.smoothingTimeConstant ??= 0.8
-        initOptions.gain ??= 1
-        initOptions.deviceId ??= undefined
-
-        const checkParams = ParameterValidator.validate(initOptions)
+        const checkParams = ParameterValidator.validate(captureOptions)
         if (!checkParams.success) { return checkParams }
-
-        const getDevice = await this.getAudioDevice(initOptions.deviceId)
-        if (getDevice.result) {
-            this.createAudioContext(getDevice.device, initOptions.sampleRate)
-            this.createAnalyser(initOptions.fftSize, initOptions.smoothingTimeConstant, initOptions.gain)
-            await this.AudioContext.suspend()
-
-            this.hertzPerDivision = initOptions.sampleRate / initOptions.fftSize
-
-            Log.console(`AudioContext latency -> ${this.AudioContext.baseLatency * 1000}ms`, Log.Colors.Green.Cyan)
-
-            return { success: true, msg: "Inicialização do microfone concluída com sucesso" }
-        }
-
-        return { success: false, msg: "Falha na inicialização do microfone" }
-    }
-
-    /**
-     * Valida o acionamento do beep
-     * @param {{
-     *     minFreq?: number,
-     *     maxFreq?: number,
-     *     amplitudeValidation?: boolean,
-     *     minAmplitude?: number,
-     *     maxAmplitude?: number,
-     *     validTrackPercentage?: number,
-     *     trackSize?: number,
-     *     timeOut?: number
-     * }} [ConfigObj] objeto com configurações para realizar a captura do beep
-     * @returns {Promise<{ 
-     *     success: boolean, 
-     *     msg: string,
-     *     frequencia?: {
-     *         values: number[],
-     *         frequenciaMedia: number,
-     *     },
-     *     amplitude?: {
-     *         values: number[],
-     *         amplitudeMedia: number,
-     *     }
-     * }>} Objeto com o resultado da validação
-     */
-    static async capture(ConfigObj = {}) {
-        ConfigObj.minFreq ??= 2950
-        ConfigObj.maxFreq ??= 3050
-        ConfigObj.amplitudeValidation ??= true
-        ConfigObj.minAmplitude ??= -30
-        ConfigObj.maxAmplitude ??= -20
-        ConfigObj.validTrackPercentage ??= 70
-        ConfigObj.trackSize ??= 500
-        ConfigObj.timeOut ??= 10000
-
-        const checkParams = ParameterValidator.validate(ConfigObj)
-        if (!checkParams.success) { return checkParams }
-
-        this.lastRead = {}
 
         await this.AudioContext.resume()
 
-        const capture = await Promise.race([this.trackCapture(ConfigObj), this.delay(ConfigObj.timeOut)])
+        const capture = await Promise.race([this.trackCapture(captureOptions), this.delay(captureOptions.timeOut)])
 
         await this.AudioContext.suspend()
 
         if (!capture) {
-            if (this.EncontrouTrackFrequencia) {
-                this.EncontrouTrackFrequencia = false
-
-                console.log({ frequencia: this.lastRead.frequencia, amplitude: this.lastRead.amplitude })
-                return { success: false, msg: "Foi detectada uma faixa na frequência esperada, mas fora da amplitude desejada" }
-
-            } else {
-                console.log({ frequencia: this.lastRead.frequencia, amplitude: this.lastRead.amplitude })
-                return { success: false, msg: "Nenhuma faixa detectada na frequência esperada" }
-            }
-        } else {
-            this.EncontrouTrackFrequencia = false
-
             return {
-                success: true,
-                msg: "Faixa detectada dentro dos valores esperados",
-                frequencia: {
-                    values: capture.frequencia,
-                    frequenciaMedia: capture.frequenciaMedia
-                },
-                amplitude: {
-                    values: capture.amplitude,
-                    amplitudeMedia: capture.amplitudeMedia
-                }
+                success: false,
+                msg: this.lastReads.find(track => this.validateTrackPercentage(track.frequencia, captureOptions))
+                    ? "Faixa detectada na frequência esperada, mas fora da amplitude desejada"
+                    : "Nenhuma faixa detectada na frequência esperada",
+                lastTracks: this.lastReads
+            }
+        }
+
+        return {
+            success: true,
+            msg: "Faixa detectada dentro dos valores esperados",
+            frequencia: {
+                values: capture.frequencia,
+                frequenciaMedia: capture.frequenciaMedia
+            },
+            amplitude: {
+                values: capture.amplitude,
+                amplitudeMedia: capture.amplitudeMedia
             }
         }
     }
 
     /**
+     * Verifica a frequência a cada 50ms e retorna caso ela esteja dentro dos valores de frequência e, opcionalmente, de amplitude
+     * @param {captureOptions} captureOptions objeto com os valores para fazer a detecção do trigger
+     */
+    static async frequencyTrigger(captureOptions) {
+        while (this.AudioContext.state == "running") {
+            const sample = await this.getData(0, true)
+
+            if (sample.frequencia[0] >= captureOptions.minFreq && sample.frequencia[0] <= captureOptions.maxFreq) {
+                if (captureOptions.amplitudeValidation) {
+                    if (sample.amplitude[0] >= captureOptions.minAmplitude && sample.amplitude[0] <= captureOptions.maxAmplitude) { return }
+                } else { return }
+            }
+
+            await this.delay(50)
+        }
+    }
+
+    /**
+     * Método que aguarda um acionamento do trigger para capturar e validar uma track, retornando a mesma caso ela seja válida.
+     * @param {captureOptions} captureOptions objeto com os valores usados para a validação
+     */
+    static async trackCapture(captureOptions) {
+        this.lastReads = []
+
+        while (this.AudioContext.state == "running") {
+            await this.frequencyTrigger(captureOptions)
+            if (this.AudioContext.state != "running") { return }
+
+            const track = await this.getData(captureOptions.trackSize)
+            this.lastReads.push(track)
+
+            const validatedTrack = this.trackValidator(track, captureOptions)
+            if (validatedTrack.result) { return validatedTrack }
+        }
+    }
+    //#endregion Capture
+
+    //#region MicrophoneCalibration
+
+    /**
      * Ajusta o ganho do microfone e retorna o valor.
      * @param {{
-     * minAmplitude: number, 
-     * maxAmplitude: number,
-     * validTrackPercentage: number,
-     * minFreq: number,
-     * maxFreq: number,
-     * trackSize: number,
-     * firstReadTimeOut: number,
-     * calibrationTimeOut: number
+     * minAmplitude?: number, 
+     * maxAmplitude?: number,
+     * validTrackPercentage?: number,
+     * minFreq?: number,
+     * maxFreq?: number,
+     * trackSize?: number,
+     * firstReadTimeOut?: number,
+     * calibrationTimeOut?: number
      * }} calibrationOptions
      * @param {number} amplitudeTolerance
      * @param {number} gainStep
@@ -513,17 +538,17 @@ export default class BeepListener {
         const checkParams = ParameterValidator.validate(calibrationOptions)
         if (!checkParams.success) { return checkParams }
 
-        const firstRead = await Promise.race([
-            BeepListener.configDeterminator(calibrationOptions),
-            this.delay(calibrationOptions.firstReadTimeOut).then(() => false)
-        ])
+        const firstRead = await BeepListener.configDeterminator(
+            // Object.assign(JSON.parse(JSON.stringify(calibrationOptions)), { timeOut: calibrationOptions.firstReadTimeOut })
+            calibrationOptions
+        )
 
-        if (!firstRead) { return { success: false, msg: "Nenhuma faixa detectada na frequência esperada" } }
+        if (!firstRead.success) { return { success: false, msg: "Nenhuma faixa detectada na frequência esperada" } }
 
         const currentAmplitude = firstRead.amplitude.media
         const centralAmplitude = (calibrationOptions.minAmplitude + calibrationOptions.maxAmplitude) / 2
         if (Math.abs(currentAmplitude - centralAmplitude) <= amplitudeTolerance) {
-            Log.console(`Novo valor de ganho: ${this.GainNode.gain.value}`, Log.Colors.Green.Cyan)
+            console.log(`%cNew Gain value: ${this.GainNode.gain.value}`, "color: #00FFFF")
             return { success: true, msg: `Sucesso ao ajustar o ganho`, gain: this.GainNode.gain.value }
         }
 
@@ -535,14 +560,7 @@ export default class BeepListener {
 
     /**
      * 
-     * @param {{
-     * minAmplitude: number,
-     * maxAmplitude: number,
-     * validTrackPercentage: number,
-     * minFreq: number,
-     * maxFreq: number,
-     * trackSize: number
-     * }} calibrationOptions
+     * @param {captureOptions} calibrationOptions
      * @param {number} centralAmplitude 
      * @param {number} currentAmplitude
      * @param {number} initialGain
@@ -565,13 +583,12 @@ export default class BeepListener {
 
         while (!condition() && this.GainNode.gain.value > 0) {
             const currentRead = await BeepListener.configDeterminator(calibrationOptions)
-            Log.console(`New Gain -> ${this.GainNode.gain.value}`, Log.Colors.Green.SpringGreen)
+            console.log(`%cTesting with Gain -> ${this.GainNode.gain.value}`, "color: #00FF7F")
             console.log(currentRead)
             const newAmplitude = currentRead.amplitude.media
 
             if (Math.abs(newAmplitude - centralAmplitude) <= amplitudeTolerance) {
-                Log.console(`Novo valor de ganho: ${this.GainNode.gain.value}
-                Amplitude: ${newAmplitude}`, Log.Colors.Green.Cyan)
+                console.log(`%cNew Gain value: ${this.GainNode.gain.value}`, "color: #00FFFF")
                 return { success: true, msg: `Sucesso ao ajustar o ganho`, gain: this.GainNode.gain.value }
             }
 
@@ -602,6 +619,9 @@ export default class BeepListener {
      * @param {number} gain - The new gain value to set.
      */
     static setGain(gain) { this.GainNode.gain.value = gain }
+    //#endregion MicrophoneCalibration
+
+    //#region ConfigDiscovererMethods
 
     /**
      * Retorna um array com os valores de frequência lidos no tempo que foi passado
@@ -613,21 +633,22 @@ export default class BeepListener {
     static async frequencyReader(time) {
         await this.AudioContext.resume()
 
-        const Track = await this.getData(time)
+        const track = await this.getData(time)
 
         await this.AudioContext.suspend()
-        return Track.frequencia
+        return track.frequencia
     }
 
     /**
-     * 
+     * Usado para determinar as características de uma faixa de uma frequência específica
      * @param {{
      *     minFreq?: number,
      *     maxFreq?: number,
      *     validTrackPercentage?: number,
-     *     trackSize?: number
-     *     amplitudeValidation?: boolean
-     * }} [ConfigObj] objeto com configurações para detecção da faixa
+     *     trackSize?: number,
+     *     amplitudeValidation?: boolean,
+     *     timeOut?: number
+     * }} captureOptions objeto com configurações para detecção da faixa
      * @returns {Promise<{
      *     success: boolean,
      *     msg?: string,
@@ -637,54 +658,63 @@ export default class BeepListener {
      * @example
      * console.log(await BeepListener.configDeterminator())
      */
-    static async configDeterminator(ConfigObj = {}) {
-        ConfigObj.minFreq ??= 2950
-        ConfigObj.maxFreq ??= 3050
-        ConfigObj.validTrackPercentage ??= 70
-        ConfigObj.trackSize ??= 500
-        ConfigObj.amplitudeValidation = false
-        ConfigObj.timeOut ??= 10000
+    static async configDeterminator(captureOptions = {}) {
+        captureOptions.minFreq ??= 2950
+        captureOptions.maxFreq ??= 3050
+        captureOptions.validTrackPercentage ??= 70
+        captureOptions.trackSize ??= 500
+        captureOptions.amplitudeValidation = false
+        captureOptions.timeOut ??= 10000
 
-        const checkParams = ParameterValidator.validate(ConfigObj)
+        const checkParams = ParameterValidator.validate(captureOptions)
         if (!checkParams.success) { return checkParams }
 
+        this.lastReads = []
+        let captureSuccess = false
+
         await this.AudioContext.resume()
-        this.delay(ConfigObj.timeOut).then(() => { this.AudioContext.suspend() })
+        this.delay(captureOptions.timeOut).then(() => { if (!captureSuccess) { this.AudioContext.suspend(); console.log(this.lastReads) } })
 
         while (this.AudioContext.state == "running") {
-            await this.frequencyTrigger(ConfigObj)
-            if (this.AudioContext.state == "suspended") { return { success: false, msg: "Falha na detecção da faixa esperada" } }
+            await this.frequencyTrigger(captureOptions)
+            if (this.AudioContext.state != "running") { break }
 
-            const Track = await this.getData(ConfigObj.trackSize)
+            const track = await this.getData(captureOptions.trackSize)
+            this.lastReads.push(track)
 
-            const ValidatedTrack = this.trackValidator(Track, ConfigObj)
+            const validatedTrack = this.trackValidator(track, captureOptions)
 
-            if (ValidatedTrack.result) {
+            if (validatedTrack.result) {
                 await this.AudioContext.suspend()
+                captureSuccess = true
 
                 return {
                     success: true,
                     frequencia: {
-                        min: Math.min(...ValidatedTrack.frequencia),
-                        max: Math.max(...ValidatedTrack.frequencia),
-                        media: ValidatedTrack.frequenciaMedia,
-                        valores: ValidatedTrack.frequencia
+                        min: Math.min(...validatedTrack.frequencia),
+                        max: Math.max(...validatedTrack.frequencia),
+                        media: validatedTrack.frequenciaMedia,
+                        valores: validatedTrack.frequencia
                     },
                     amplitude: {
-                        min: Math.min(...ValidatedTrack.amplitude),
-                        max: Math.max(...ValidatedTrack.amplitude),
-                        media: ValidatedTrack.amplitudeMedia,
-                        valores: ValidatedTrack.amplitude
+                        min: Math.min(...validatedTrack.amplitude),
+                        max: Math.max(...validatedTrack.amplitude),
+                        media: validatedTrack.amplitudeMedia,
+                        valores: validatedTrack.amplitude
                     }
                 }
             }
         }
+
+        return { success: false, msg: "Falha na detecção da faixa esperada" }
     }
+    //#endregion ConfigDiscovererMethods
 
     static { window.BeepListener = this }
 
 }
 
+//#region ParameterValidation
 export class ParameterValidator {
 
     static parameterCheckConfigs = {
@@ -693,12 +723,12 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.sampleRate.value] },
-                message: "sampleRate deve ser um número"
+                msg: "sampleRate deve ser um número"
             },
             valueCheck: {
                 condition: (value) => value >= 8000 && value <= 96000,
                 get params() { return [ParameterValidator.parameterCheckConfigs.sampleRate.value] },
-                message: "sampleRate deve estar entre 8000 e 96000"
+                msg: "sampleRate deve estar entre 8000 e 96000"
             }
         },
         fftSize: {
@@ -706,12 +736,12 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.fftSize.value] },
-                message: "fftSize deve ser um número"
+                msg: "fftSize deve ser um número"
             },
             valueCheck: {
                 condition: (value) => value >= 32 && value <= 32768 && Number.isInteger(Math.log(value) / Math.log(2)),
                 get params() { return [ParameterValidator.parameterCheckConfigs.fftSize.value] },
-                message: "fftSize deve estar entre 32 e 32768 e deve ser uma potência de 2"
+                msg: "fftSize deve estar entre 32 e 32768 e deve ser uma potência de 2"
             }
         },
         smoothingTimeConstant: {
@@ -719,12 +749,12 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.smoothingTimeConstant.value] },
-                message: "smoothingTimeConstant deve ser um número"
+                msg: "smoothingTimeConstant deve ser um número"
             },
             valueCheck: {
                 condition: (value) => value >= 0 && value <= 1,
                 get params() { return [ParameterValidator.parameterCheckConfigs.smoothingTimeConstant.value] },
-                message: "smoothingTimeConstant deve estar entre 0 e 1"
+                msg: "smoothingTimeConstant deve estar entre 0 e 1"
             }
         },
         gain: {
@@ -732,7 +762,7 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.gain.value] },
-                message: "gain deve ser um número"
+                msg: "gain deve ser um número"
             }
         },
         deviceId: {
@@ -740,7 +770,7 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "string" || value == undefined,
                 get params() { return [ParameterValidator.parameterCheckConfigs.deviceId.value] },
-                message: "deviceId deve ser uma string ou undefined"
+                msg: "deviceId deve ser uma string ou undefined"
             }
         },
         minFreq: {
@@ -748,17 +778,17 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.minFreq.value] },
-                message: "minFreq deve ser um número"
+                msg: "minFreq deve ser um número"
             },
             valueCheck: {
                 condition: (value) => value > 0,
                 get params() { return [ParameterValidator.parameterCheckConfigs.minFreq.value] },
-                message: "minFreq deve ser maior que 0"
+                msg: "minFreq deve ser maior que 0"
             },
             rangeCheck: {
                 condition: (minFreq, maxFreq) => minFreq <= maxFreq,
                 get params() { return [ParameterValidator.parameterCheckConfigs.minFreq.value, ParameterValidator.parameterCheckConfigs.maxFreq.value] },
-                message: "minFreq deve ser menor ou igual a maxFreq"
+                msg: "minFreq deve ser menor ou igual a maxFreq"
             }
         },
         maxFreq: {
@@ -766,12 +796,12 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.maxFreq.value] },
-                message: "maxFreq deve ser um número"
+                msg: "maxFreq deve ser um número"
             },
             valueCheck: {
                 condition: (value) => value > 0,
                 get params() { return [ParameterValidator.parameterCheckConfigs.maxFreq.value] },
-                message: "maxFreq deve ser maior que 0"
+                msg: "maxFreq deve ser maior que 0"
             }
         },
         amplitudeValidation: {
@@ -779,7 +809,7 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "boolean",
                 get params() { return [ParameterValidator.parameterCheckConfigs.amplitudeValidation.value] },
-                message: "amplitudeValidation deve ser um booleano"
+                msg: "amplitudeValidation deve ser um booleano"
             }
         },
         minAmplitude: {
@@ -787,12 +817,12 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.minAmplitude.value] },
-                message: "minAmplitude deve ser um número"
+                msg: "minAmplitude deve ser um número"
             },
             rangeCheck: {
                 condition: (minAmplitude, maxAmplitude) => minAmplitude <= maxAmplitude,
                 get params() { return [ParameterValidator.parameterCheckConfigs.minAmplitude.value, ParameterValidator.parameterCheckConfigs.maxAmplitude.value] },
-                message: "minAmplitude deve ser menor ou igual a maxAmplitude"
+                msg: "minAmplitude deve ser menor ou igual a maxAmplitude"
             }
         },
         maxAmplitude: {
@@ -800,7 +830,7 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.maxAmplitude.value] },
-                message: "maxAmplitude deve ser um número"
+                msg: "maxAmplitude deve ser um número"
             }
         },
         validTrackPercentage: {
@@ -808,12 +838,12 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.validTrackPercentage.value] },
-                message: "validTrackPercentage deve ser um número"
+                msg: "validTrackPercentage deve ser um número"
             },
             valueCheck: {
                 condition: (value) => value >= 0 && value <= 100,
                 get params() { return [ParameterValidator.parameterCheckConfigs.validTrackPercentage.value] },
-                message: "validTrackPercentage deve estar entre 0 e 100"
+                msg: "validTrackPercentage deve estar entre 0 e 100"
             }
         },
         trackSize: {
@@ -821,12 +851,12 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.trackSize.value] },
-                message: "trackSize deve ser um número"
+                msg: "trackSize deve ser um número"
             },
             valueCheck: {
                 condition: (value) => value > 0,
                 get params() { return [ParameterValidator.parameterCheckConfigs.trackSize.value] },
-                message: "trackSize deve ser maior que 0"
+                msg: "trackSize deve ser maior que 0"
             }
         },
         timeOut: {
@@ -834,7 +864,7 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.timeOut.value] },
-                message: "timeOut deve ser um número"
+                msg: "timeOut deve ser um número"
             }
         },
         firstReadTimeOut: {
@@ -842,18 +872,27 @@ export class ParameterValidator {
             typeCheck: {
                 condition: (value) => typeof value == "number",
                 get params() { return [ParameterValidator.parameterCheckConfigs.firstReadTimeOut.value] },
-                message: "firstReadTimeOut deve ser um número"
+                msg: "firstReadTimeOut deve ser um número"
+            }
+        },
+        calibrationTimeOut: {
+            value: undefined,
+            typeCheck: {
+                condition: (value) => typeof value == "number",
+                get params() { return [ParameterValidator.parameterCheckConfigs.calibrationTimeOut.value] },
+                msg: "calibrationTimeOut deve ser um número"
             }
         }
     }
 
     /**
      * @param {{[parameterName: string]: number | string | boolean | undefined}} params
+     * @returns {{success: boolean, msg?: string}}
      */
     static validate(params) {
         for (const parameter in params) {
             if (!(parameter in this.parameterCheckConfigs)) {
-                return { success: false, message: `Parâmetro ${parameter} não está configurado no objeto parameterCheckConfigs` }
+                return { success: false, msg: `Parâmetro ${parameter} não está configurado no objeto parameterCheckConfigs` }
             }
 
             this.parameterCheckConfigs[parameter].value = params[parameter]
@@ -867,7 +906,7 @@ export class ParameterValidator {
                     const check = this.check(
                         this.parameterCheckConfigs[parameter][validationType].condition,
                         this.parameterCheckConfigs[parameter][validationType].params,
-                        this.parameterCheckConfigs[parameter][validationType].message
+                        this.parameterCheckConfigs[parameter][validationType].msg
                     )
 
                     if (!check.success) { return check }
@@ -882,7 +921,8 @@ export class ParameterValidator {
      * 
      * @param {function(...arg0): boolean} condition
      * @param {array} params
-     * @param {string} message
+     * @param {string} msg
      */
-    static check(condition, params, message) { return condition(...params) ? { success: true } : { success: false, message } }
+    static check(condition, params, msg) { return condition(...params) ? { success: true } : { success: false, msg } }
 }
+//#endregion ParameterValidation
