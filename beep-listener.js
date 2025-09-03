@@ -55,6 +55,9 @@ export default class BeepListener {
      */
     static GainNode
 
+    /** @type {AudioNode[]} */
+    static filters = []
+
     /**
      * Usado para descobrir em qual posição do array está a amplitude da frequência desejada
      * @type number
@@ -149,7 +152,7 @@ export default class BeepListener {
      * @returns microfone detectado ou erro
      */
     static async getAudioDevice(deviceId) {
-        const audioDevice = await navigator.mediaDevices.getUserMedia({ audio: { autoGainControl: false, deviceId, noiseSuppression: false } })
+        const audioDevice = await navigator.mediaDevices.getUserMedia({ audio: { autoGainControl: false, deviceId, noiseSuppression: false, echoCancellation: false } })
             .then(device => {
                 return { result: true, device }
             })
@@ -185,9 +188,53 @@ export default class BeepListener {
         this.GainNode = this.AudioContext.createGain()
         this.GainNode.gain.value = gain
 
-        this.AudioSourceNode.connect(this.GainNode)
-        this.GainNode.connect(this.Analyser)
-        // this.Analyser.connect(this.AudioContext.destination) //Descomentar para jogar o som lido pelo microfone no alto-falante.
+        /** @type {AudioNode[]} */
+        const audioNodes = [this.AudioSourceNode].concat(this.filters).concat([this.GainNode, this.Analyser, /* this.AudioContext.destination */]) // Descomentar para ouvir o audio
+
+        audioNodes.forEach((node, index) => { if (index < audioNodes.length - 1) node.connect(audioNodes[index + 1]) })
+    }
+
+    static disconnect() {
+        /** @type {AudioNode[]} */
+        const audioNodes = [this.AudioSourceNode].concat(this.filters).concat([this.GainNode, this.Analyser])
+
+        audioNodes.forEach((node, index) => { if (index < audioNodes.length - 1) node.disconnect() })
+    }
+
+    /**
+     * Altera os filtros
+     * @param {AudioNode[]} filters Filtros
+     */
+    static changeFilters(filters) {
+        this.filters = filters
+        this.disconnect()
+        this.createAnalyser(this.Analyser.fftSize, this.Analyser.smoothingTimeConstant, this.GainNode.gain.value)
+    }
+
+    /**
+     * Cria e aplica 10 filtros passa-faixa para filtrar as frequências de interesse
+     * @param {number} minFreq Frequência de corte inferior
+     * @param {number} maxFreq Frequência de corte superior
+     */
+    static setBandpassFilters(minFreq, maxFreq) {
+        this.changeFilters([...Array(10)].map(() => this.createBandpassFilter(minFreq, maxFreq)))
+    }
+
+    /**
+     * Cria um filtro passa-faixa
+     * @param {number} minFreq Frequência de corte inferior
+     * @param {number} maxFreq Frequência de corte superior
+     */
+    static createBandpassFilter(minFreq, maxFreq) {
+        const frequency = Math.sqrt(minFreq * maxFreq)
+        const q = frequency / (maxFreq - minFreq)
+
+        const filter = this.AudioContext.createBiquadFilter()
+        filter.type = "bandpass"
+        filter.frequency.value = frequency
+        filter.Q.value = q
+
+        return filter
     }
     //#endregion Init
 
