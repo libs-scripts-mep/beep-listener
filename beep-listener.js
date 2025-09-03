@@ -53,6 +53,9 @@ export default class BeepListener {
      */
     static EncontrouTrackFrequencia
 
+    /** @type {AudioNode[]} */
+    static filters = []
+
     //#region DeviceIds
 
     /** Localiza o ID de um dispositivo baseado no filtro passado */
@@ -139,11 +142,54 @@ export default class BeepListener {
         this.Gain = this.AudioContext.createGain()
         this.Gain.gain.value = ParamObj.Gain
 
-        this.AudioSourceNode.connect(this.Gain)
-        this.Gain.connect(this.Analyser)
-        // this.Analyser.connect(this.AudioContext.destination) //Descomentar para jogar o som lido pelo microfone no alto-falante.
+        /** @type {AudioNode[]} */
+        const audioNodes = [this.AudioSourceNode].concat(this.filters).concat([this.Gain, this.Analyser, /* this.AudioContext.destination */]) // Descomentar para ouvir o audio
+
+        audioNodes.forEach((node, index) => { if (index < audioNodes.length - 1) node.connect(audioNodes[index + 1]) })
     }
 
+    static disconnect() {
+        /** @type {AudioNode[]} */
+        const audioNodes = [this.AudioSourceNode].concat(this.filters).concat([this.Gain, this.Analyser])
+
+        audioNodes.forEach((node, index) => { if (index < audioNodes.length - 1) node.disconnect() })
+    }
+
+    /**
+     * Altera os filtros
+     * @param {AudioNode[]} filters Filtros
+     */
+    static changeFilters(filters) {
+        this.filters = filters
+        this.disconnect()
+        this.CreateAnalyser({ FFTSize: this.Analyser.fftSize, SmoothingTimeConstant: this.Analyser.smoothingTimeConstant, Gain: this.Gain.gain.value })
+    }
+
+    /**
+     * Cria e aplica 10 filtros passa-faixa para filtrar as frequências de interesse
+     * @param {number} minFreq Frequência de corte inferior
+     * @param {number} maxFreq Frequência de corte superior
+     */
+    static setBandpassFilters(minFreq, maxFreq) {
+        this.changeFilters([...Array(10)].map(() => this.createBandpassFilter(minFreq, maxFreq)))
+    }
+
+    /**
+     * Cria um filtro passa-faixa
+     * @param {number} minFreq Frequência de corte inferior
+     * @param {number} maxFreq Frequência de corte superior
+     */
+    static createBandpassFilter(minFreq, maxFreq) {
+        const frequency = Math.sqrt(minFreq * maxFreq)
+        const q = frequency / (maxFreq - minFreq)
+
+        const filter = this.AudioContext.createBiquadFilter()
+        filter.type = "bandpass"
+        filter.frequency.value = frequency
+        filter.Q.value = q
+
+        return filter
+    }
 
     /**
      *  
